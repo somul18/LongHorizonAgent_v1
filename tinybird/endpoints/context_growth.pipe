@@ -1,0 +1,15 @@
+DESCRIPTION >
+    Prompt size over time per run: is the context flat or growing?
+
+NODE context_growth_node
+SQL >
+    %
+    SELECT run_id, agent, intDiv(step, {{ UInt32(bucket, 50) }}) * {{ UInt32(bucket, 50) }} AS step_bucket,
+           avg(prompt_tokens) AS avg_prompt_tokens, max(state_tokens) AS max_state_tokens,
+           sum(evictions) AS evictions
+    FROM agent_steps
+    WHERE 1 {% if defined(run_id) %} AND run_id = {{ String(run_id) }} {% end %}
+    GROUP BY run_id, agent, step_bucket
+    ORDER BY run_id, step_bucket
+
+TYPE endpoint

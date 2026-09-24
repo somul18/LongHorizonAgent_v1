@@ -1,0 +1,14 @@
+DESCRIPTION >
+    Cold-storage items (superseded / evicted facts, observations, notes).
+
+SCHEMA >
+    `ts` Float64 `json:$.ts`,
+    `run_id` String `json:$.run_id`,
+    `id` UInt64 `json:$.id`,
+    `step` UInt32 `json:$.step`,
+    `kind` LowCardinality(String) `json:$.kind`,
+    `key` String `json:$.key`,
+    `payload` String `json:$.payload`
+
+ENGINE "MergeTree"
+ENGINE_SORTING_KEY "run_id, kind, key, step"

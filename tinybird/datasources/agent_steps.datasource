@@ -1,0 +1,20 @@
+DESCRIPTION >
+    One row per agent step. Emitted by lha.sinks.TinybirdSink.
+
+SCHEMA >
+    `ts` Float64 `json:$.ts`,
+    `run_id` String `json:$.run_id`,
+    `agent` LowCardinality(String) `json:$.agent`,
+    `model` LowCardinality(String) `json:$.model`,
+    `step` UInt32 `json:$.step`,
+    `tool` LowCardinality(String) `json:$.tool`,
+    `prompt_tokens` UInt32 `json:$.prompt_tokens`,
+    `output_tokens` UInt32 `json:$.output_tokens`,
+    `state_tokens` UInt32 `json:$.state_tokens`,
+    `n_facts` Nullable(UInt32) `json:$.n_facts`,
+    `n_archived` Nullable(UInt32) `json:$.n_archived`,
+    `evictions` Nullable(UInt32) `json:$.evictions`,
+    `op_errors` Nullable(UInt32) `json:$.op_errors`
+
+ENGINE "MergeTree"
+ENGINE_SORTING_KEY "run_id, step"

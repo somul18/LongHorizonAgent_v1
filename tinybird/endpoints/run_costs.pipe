@@ -1,0 +1,13 @@
+DESCRIPTION >
+    Total tokens and health per run, for the leaderboard / dashboard.
+
+NODE run_costs_node
+SQL >
+    SELECT run_id, any(agent) AS agent, any(model) AS model, max(step) AS steps,
+           sum(prompt_tokens) AS input_tokens, sum(output_tokens) AS output_tokens,
+           max(prompt_tokens) AS peak_prompt_tokens, sum(op_errors) AS op_errors
+    FROM agent_steps
+    GROUP BY run_id
+    ORDER BY input_tokens DESC
+
+TYPE endpoint

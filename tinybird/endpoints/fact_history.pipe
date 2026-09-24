@@ -1,0 +1,12 @@
+DESCRIPTION >
+    Audit trail for one key: every value it ever had and when it was superseded or evicted.
+
+NODE fact_history_node
+SQL >
+    %
+    SELECT step, kind, JSONExtractString(payload, 'value') AS value, payload
+    FROM agent_archive
+    WHERE run_id = {{ String(run_id, required=True) }} AND key = {{ String(key, required=True) }}
+    ORDER BY step
+
+TYPE endpoint
