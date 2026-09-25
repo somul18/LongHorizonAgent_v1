@@ -42,6 +42,7 @@ class DesignSession:
         meta = json.loads((self.dir / "intent.json").read_text())
         self.request, self.part = meta["request"], meta["part"]
         self.interpretation = meta["interpretation"]
+        self.family = self.interpretation.get("family", "plate")  # sessions from before families were plates
         self.state = WorkingState.from_dict(json.loads((self.dir / "state.json").read_text()))
         self.archive = Archive(self.dir / "archive.jsonl", self.dir.name)
 
@@ -79,6 +80,7 @@ class DesignSession:
         for d in sorted(Path(runs_dir).glob(f"{PREFIX}*/intent.json")):
             meta = json.loads(d.read_text())
             out.append({"id": d.parent.name, "part": meta["part"], "request": meta["request"],
+                        "family": meta["interpretation"].get("family", "plate"),
                         "created": meta.get("created", d.stat().st_mtime)})
         return sorted(out, key=lambda x: -x["created"])
 
@@ -96,12 +98,16 @@ class DesignSession:
 
     def change(self, text: str) -> dict:
         """An engineering change or an answer to an open question, e.g. 'ECO-1847: thickness 6 mm -> 3 mm'."""
-        values, source = interpret_change(text, self.part)
+        values, source = interpret_change(text, self.part, self.family)
         if not values:
-            raise ValueError("no recognisable change: name an attribute and a value, e.g. 'ECO-1847: thickness 3 mm'")
+            example = "thickness 3 mm" if self.family == "plate" else f"{self.fam().attrs[0][0]} 60 mm"
+            raise ValueError(f"no recognisable change: name an attribute and a value, e.g. 'ECO-1847: {example}'")
         ops = [{"op": "set_fact", "key": f"{self.part}.{a}", "value": v, "source": source} for a, v in values.items()]
         ops += [{"op": "resolve_question", "text": question(self.part, a), "answer": v}
                 for a, v in values.items() if question(self.part, a) in self.state.questions]
+        # a change can open a new requirement (an outline star needs a line width): ask, don't assume
+        ops += [{"op": "add_question", "text": question(self.part, a)} for a in self._missing({**self.spec(), **values})
+                if question(self.part, a) not in self.state.questions]
         changes = self._apply(ops, "change", source, text)
         return {"source": source, "values": values, "changes": changes}
 
@@ -110,8 +116,30 @@ class DesignSession:
         p = self.part + "."
         return {k[len(p):]: f.value for k, f in self.state.facts.items() if k.startswith(p)}
 
+    def fam(self):
+        from .families import FAMILIES
+
+        return FAMILIES[self.family]
+
     def missing(self) -> list[str]:
-        return [a for a in ATTRS if a not in self.spec()]
+        return self._missing(self.spec())
+
+    def _missing(self, spec: dict) -> list[str]:
+        return [a for a in ATTRS if a not in spec] if self.family == "plate" else self.fam().needed(spec)
+
+    def attrs(self) -> list[dict]:
+        """The family's attributes in display order, for the interpretation table."""
+        if self.family == "plate":
+            labels = {"hole_diameter": "hole Ø"}
+            return [{"attr": a, "unit": "" if a == "material" else "mm", "label": labels.get(a, a)} for a in ATTRS]
+        return [{"attr": a, "unit": u, "label": label} for a, u, label in self.fam().attrs]
+
+    def spec_line(self, spec: dict) -> str:
+        if self.family == "plate":
+            g = lambda a: spec.get(a, "?")  # noqa: E731
+            return (f"{g('length')} × {g('width')} × {g('thickness')} mm · 4 × Ø{g('hole_diameter')} mm holes · "
+                    f"{g('material')}")
+        return self.fam().spec_line(spec)
 
     def log(self) -> list[dict]:
         p = self.dir / "log.jsonl"
@@ -126,6 +154,8 @@ class DesignSession:
         return None
 
     def understanding(self) -> str:
+        if self.family != "plate":
+            return self.fam().understanding(self.part, self.spec(), self.last_change())
         return describe_part(self.part, {**self.spec(), "type": "plate"}, last_change=self.last_change(),
                              hole_inset=HOLE_INSET, expected=ATTRS, missing="unspecified")
 
@@ -140,6 +170,7 @@ class DesignSession:
                     spec[key.split(".", 1)[1]] = new
             label = "Design intent" if e["kind"] == "intent" else e["source"] if e["source"] != "user" else "User"
             steps.append({"label": label, "text": e["text"], "spec": dict(spec), "step": e["step"],
+                          "line": self.spec_line(spec),
                           "changes": [c for c in e["changes"] if c[0].startswith(self.part + ".")]})
         return steps
 
@@ -150,41 +181,55 @@ class DesignSession:
         facts = [{"key": k, "attr": k.split(".", 1)[-1], "value": f.value, "source": f.source, "step": f.step}
                  for k, f in sorted(self.state.facts.items())]
         return {"id": self.dir.name, "part": self.part, "request": self.request, "interpretation": self.interpretation,
+                "family": self.family, "family_label": "rectangular mounting plate" if self.family == "plate" else self.fam().label,
+                "attrs": self.attrs(), "spec_line": self.spec_line(self.spec()),
                 "facts": facts, "questions": list(self.state.questions), "missing": self.missing(),
                 "understanding": self.understanding(), "evolution": self.evolution(), "build": build,
                 "archived": [asdict(it) for it in self.archive.items][-20:]}
 
     # ---------------------------------------------------------------- CAD
     def build(self) -> dict:
-        """Build the part from the current state with the parametric plate template, then validate it
+        """Build the part from the current state with its family's parametric template, then validate it
         against an independently constructed reference. Refuses while a requirement is missing."""
         from .bench.design_desk import plate_script
         from .cad import CadWorkspace, DENSITIES, geometry_matches, measure
 
         spec = self.spec()
         if miss := self.missing():
-            raise ValueError(f"can't build yet: {', '.join(miss)} not specified. Answer with e.g. '{miss[0]} 5 mm'.")
-        dims = [float(spec[a]) for a in ("length", "width", "thickness", "hole_diameter")]
+            example = "'material steel'" if miss[0] == "material" else "'style solid'" if miss[0] == "style" else f"'{miss[0]} 5 mm'"
+            raise ValueError(f"can't build yet: {', '.join(miss)} not specified. Answer with e.g. {example}.")
+        if self.family == "plate":
+            dims = [float(spec[a]) for a in ("length", "width", "thickness", "hole_diameter")]
+            script, expected = plate_script(*dims), dims[:3]
+            reference = _reference(*dims)  # built differently (solid minus cylinders), so the check means something
+        else:
+            fam = self.fam()
+            if why := fam.sanity(spec):
+                raise ValueError(f"can't build this {fam.label}: {why}.")
+            script, expected, reference = fam.script(spec), fam.expected_bbox(spec), fam.reference(spec)
         ws = CadWorkspace(self.dir / "cad")
-        part = ws.build(self.part, plate_script(*dims))
+        part = ws.build(self.part, script)
         density = DENSITIES.get(str(spec["material"]))
         m = measure(part, density)
         {t.name: t for t in ws.tools()}["cad_export"].fn({"name": self.part, "format": "step"})  # -> <part>.step
-        reference = _reference(*dims)  # built differently (solid minus cylinders), so the check means something
-        checks = {
-            "dimensions": all(abs(b - x) < 0.01 for b, x in zip(m["bbox_mm"], dims[:3])),
-            "through_holes": m["z_through_holes"] == 4,
+        checks = {"dimensions": all(abs(b - x) < 0.01 for b, x in zip(m["bbox_mm"], expected))}
+        if self.family == "plate":
+            checks["through_holes"] = m["z_through_holes"] == 4
+        checks.update({
             "valid_solid": bool(m["valid"]) and m["solids"] == 1,
             "geometry": geometry_matches(part, reference),
             "mass": density is not None and abs(m["mass_g"] - float(reference.volume) * density / 1000) < 0.01 * m["mass_g"],
-        }
+        })
+        if self.family != "plate":
+            checks.update(self.fam().extra_checks(part, spec, m))
+        m["expected_bbox_mm"] = [round(x, 3) for x in expected]
         result = {"spec": spec, "measure": m, "checks": checks, "ok": all(checks.values()),
                   "step_file": str(self.dir / "cad" / f"{self.part}.step"), "state_step": self.state.step}
         (self.dir / "build.json").write_text(json.dumps(result, indent=1))
         # the benchmark's summary format, so the CAD parts tab shows this design too
         (self.dir / "summary.json").write_text(json.dumps({
             "env": "intent", "agent": "design-intent", "run_id": self.dir.name, "model": self.interpretation.get("interpreter"),
-            "score": 1.0 if result["ok"] else 0.0, "spec": {self.part: spec},
+            "score": 1.0 if result["ok"] else 0.0, "spec": {self.part: spec}, "family": {self.part: self.family},
             "grade": {"q1": {"part": self.part, "geometry": checks["geometry"] and checks["dimensions"],
                              "mass": checks["mass"], "ref_mass_g": m.get("mass_g")}},
             "answer": {"q1": {"part": self.part, "mass_g": m.get("mass_g")}}}, indent=1))

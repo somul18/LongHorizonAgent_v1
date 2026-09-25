@@ -26,10 +26,14 @@ from dataclasses import dataclass
 MATERIALS = {
     "al6061": ("6061 aluminum", "metal"), "steel": ("steel", "metal"), "ss304": ("304 stainless steel", "metal"),
     "ti6al4v": ("Ti-6Al-4V titanium", "metal"), "abs": ("ABS", "polymer"), "pla": ("PLA", "polymer"),
-    "pa12": ("PA12 nylon", "polymer"),
+    "pa12": ("PA12 nylon", "polymer"), "pet": ("PET", "polymer"), "hdpe": ("HDPE", "polymer"),
+    "pp": ("polypropylene", "polymer"), "brass": ("brass", "metal"), "silver": ("sterling silver", "metal"),
+    "gold": ("gold", "metal"),
 }
 UNITS = {"length": "mm", "width": "mm", "height": "mm", "depth": "mm", "thickness": "mm", "wall": "mm",
-         "hole_diameter": "mm", "mass_g": "g"}
+         "hole_diameter": "mm", "mass_g": "g",
+         "diameter": "mm", "neck_diameter": "mm", "neck_height": "mm", "bar_width": "mm", "crossbar_from_top": "mm",
+         "size": "mm", "line_width": "mm"}
 NUMBERS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"]
 # Attributes a plate-like part needs before it can be built (DesignDesk's spec).
 PLATE_ATTRS = ("length", "width", "thickness", "hole_diameter", "material")
@@ -65,8 +69,12 @@ def _count(n) -> str:
     return NUMBERS[n] if 0 <= n < len(NUMBERS) else str(n)
 
 
+HUMAN = {"crossbar_from_top": "crossbar position (from the top)", "wall": "wall thickness", "size": "size (point to point)",
+         "neck_diameter": "neck diameter", "diameter": "body diameter"}
+
+
 def _human(attr: str) -> str:
-    return attr.replace("_g", "").replace("_", " ")
+    return HUMAN.get(attr) or attr.replace("_g", "").replace("_", " ")
 
 
 def _material(v) -> tuple[str, str | None]:

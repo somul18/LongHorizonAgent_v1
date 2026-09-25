@@ -38,6 +38,12 @@ MATERIAL_WORDS = [  # (pattern, canonical id) - first match wins, so specific na
     (r"\babs\b", "abs"),
     (r"\bpla\b", "pla"),
     (r"\bsteel\b", "steel"),
+    (r"\b(?:sterling\s*)?silver\b|\b925\b", "silver"),
+    (r"\bbrass\b", "brass"),
+    (r"\bgold\b", "gold"),
+    (r"\b(?:pet(?:g)?|polyethylene\s*terephthalate)\b", "pet"),
+    (r"\bhdpe\b|high[\s-]*density\s*polyethylene", "hdpe"),
+    (r"\bpp\b|polypropylene", "pp"),
     (r"\balumin(?:ium|um)\b", "al6061"),  # plain "aluminum": the family's only aluminum alloy (noted)
 ]
 METRIC_CLEARANCE = {"m3": 3.2, "m4": 4.3, "m5": 5.3, "m6": 6.4}  # ISO 273 medium-fit clearance holes
@@ -58,6 +64,7 @@ class Interpretation:
     unknown: list = field(default_factory=list)    # required attrs the request does not state
     notes: list = field(default_factory=list)      # conventions applied, or requests the family can't honour
     interpreter: str = "rules"
+    family: str = "plate"                          # which part family builds it (lha.families)
 
     def ops(self) -> list[dict]:
         """The state operations that load this intent into a working state."""
@@ -100,6 +107,8 @@ def part_name(text: str, default: str = "part") -> str:
 # ------------------------------------------------------------------ rule-based interpreter
 def interpret_rules(text: str, part: str | None = None) -> Interpretation:
     t = " " + text.lower().replace("×", "x").replace("*", "x") + " "
+    if (fam := detect_family(text)).name != "plate":
+        return _interpret_family_rules(fam, text, t, part)
     it = Interpretation(request=text.strip(), part=part or part_name(text))
     f = it.facts
 
@@ -146,6 +155,36 @@ def interpret_rules(text: str, part: str | None = None) -> Interpretation:
     return it
 
 
+def detect_family(text: str):
+    from .families import detect
+
+    return detect(text)
+
+
+def _material_fact(it: Interpretation, t: str) -> None:
+    if (mid := normalize_material(t)) is not None:
+        it.facts["material"] = mid
+        if re.search(r"\balumin(?:ium|um)\b", t) and "6061" not in t:
+            it.notes.append("'aluminum' read as 6061 aluminum, the only aluminum alloy supported")
+
+
+def _interpret_family_rules(fam, text: str, t: str, part: str | None) -> Interpretation:
+    """A bottle, cross or star: the family reads its own attributes; the rules are the same as for plates."""
+    facts, notes = fam.parse(t)
+    it = Interpretation(request=text.strip(), part=part or fam.part_name(t), notes=notes, family=fam.name)
+    it.facts = facts
+    _material_fact(it, t)
+    _finish_family(it, fam)
+    return it
+
+
+def _finish_family(it: Interpretation, fam) -> None:
+    it.facts = {a: it.facts[a] for a in fam.attr_names() if a in it.facts}
+    it.unknown = fam.needed(it.facts)
+    if not it.unknown and (why := fam.sanity(it.facts)):
+        it.notes.append(f"these values can't make a valid {fam.label}: {why}")
+
+
 # ------------------------------------------------------------------ model-based interpreter
 MODEL_SYSTEM = f"""You translate a mechanical design request into structured CAD requirements.
 The part family is a rectangular plate (length x width x thickness, in mm) with {HOLE_COUNT} through-holes,
@@ -165,16 +204,24 @@ Reply with ONE JSON object and nothing else:
 def interpret_model(text: str, llm, part: str | None = None) -> Interpretation:
     from .agent import parse_response
 
-    out, _ = llm.complete(MODEL_SYSTEM, f"Design request:\n{text.strip()}", 800)
+    fam = detect_family(text)
+    out, _ = llm.complete(MODEL_SYSTEM if fam.name == "plate" else fam.model_system(), f"Design request:\n{text.strip()}", 800)
     data = parse_response(out)
-    it = Interpretation(request=text.strip(), part=part or _slug(data.get("part")) or part_name(text),
-                        interpreter=getattr(llm, "name", "model"))
+    default = part_name(text) if fam.name == "plate" else fam.part_name(text.lower())
+    it = Interpretation(request=text.strip(), part=part or _slug(data.get("part")) or default,
+                        interpreter=getattr(llm, "name", "model"), family=fam.name)
     raw = data.get("facts") or {}
-    for a in ATTRS:
+    names = ATTRS if fam.name == "plate" else fam.attr_names()
+    for a in names:
         v = raw.get(a)
         if v in (None, ""):
             continue
-        if a == "material":
+        if a == "style":
+            if str(v).lower() in ("solid", "outline"):
+                it.facts[a] = str(v).lower()
+            else:
+                it.notes.append(f"style {v!r} is not solid or outline")
+        elif a == "material":
             mid = normalize_material(str(v)) or (str(v).lower() if str(v).lower() in {m for _, m in MATERIAL_WORDS} else None)
             if mid:
                 it.facts[a] = mid
@@ -186,8 +233,11 @@ def interpret_model(text: str, llm, part: str | None = None) -> Interpretation:
             except ValueError:
                 it.notes.append(f"{a} = {v!r} is not a number of millimetres")
     it.notes += [str(n) for n in data.get("notes") or []]
-    it.notes += [f"ignored unknown attribute {k!r}" for k in raw if k not in ATTRS]
-    it.unknown = [a for a in ATTRS if a not in it.facts]
+    it.notes += [f"ignored unknown attribute {k!r}" for k in raw if k not in names]
+    if fam.name == "plate":
+        it.unknown = [a for a in ATTRS if a not in it.facts]
+    else:
+        _finish_family(it, fam)
     return it
 
 
@@ -215,12 +265,18 @@ def interpret(text: str, part: str | None = None, llm=None) -> Interpretation:
 
 
 # ------------------------------------------------------------------ changes after the intent
-def interpret_change(text: str, part: str) -> tuple[dict, str]:
+def interpret_change(text: str, part: str, family: str = "plate") -> tuple[dict, str]:
     """An engineering change or an answer, e.g. 'ECO-1847: reduce thickness to 3 mm' or 'thickness 5 mm'.
     Returns ({attr: value}, source) where source is the ECO id when one is given, else 'user'."""
     t = text.lower().replace("×", "x")
     src = (m[0].upper() if (m := re.search(r"eco[\s-]*\d+", t)) else "user").replace(" ", "-")
     out = {}
+    if family != "plate":
+        from .families import FAMILIES
+
+        out = FAMILIES[family].parse_change(re.sub(r"eco[\s-]*\d+", "", t))
+        _change_material(t, out)
+        return out, src
     for attr, words in (("length", r"length|long"), ("width", r"width|wide"), ("thickness", r"thickness|thick"),
                         ("hole_diameter", r"hole(?:[\s_-]*diameter)?s?|holes?")):
         # the new value: after "to" / an arrow if there is one ("from 6 mm to 4 mm", "95 mm -> 110 mm")
@@ -229,12 +285,23 @@ def interpret_change(text: str, part: str) -> tuple[dict, str]:
             out[attr] = _mm(float(m[1]))
     if "hole" in t and "hole_diameter" not in out and (m := re.search(r"\b(m[3-6])\b", t)):
         out["hole_diameter"] = _mm(METRIC_CLEARANCE[m[1]])
-    if re.search(r"material|switch|change|make|use|\bto\b|→|->", t):
+    _change_material(t, out)
+    return out, src
+
+
+def _change_material(t: str, out: dict) -> None:
+    if re.search(r"material|switch|change|make|use|\bto\b|→|->|\bin\b|\bfrom\b", t):
         # the target material is the last one named ("ABS -> Al6061", "switch from steel to PLA")
-        found = sorted((m.start(), mid) for pat, mid in MATERIAL_WORDS for m in re.finditer(pat, t))
+        # patterns are in priority order, so "stainless steel" is ss304 and its "steel" is not counted again
+        found, taken = [], []
+        for pat, mid in MATERIAL_WORDS:
+            for m in re.finditer(pat, t):
+                if not any(a < m.end() and m.start() < b for a, b in taken):
+                    taken.append(m.span())
+                    found.append((m.start(), mid))
+        found.sort()
         if found:
             out["material"] = found[-1][1]
-    return out, src
 
 
 def intent_sentence(part: str, spec: dict) -> str:
