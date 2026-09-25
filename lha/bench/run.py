@@ -75,7 +75,8 @@ def main(argv=None) -> None:
     # Real models write longer fact lines (sources, notes, a focus) than the scripted policies,
     # so live runs get more room by default; the prompt still stays flat.
     budget = a.budget or ENVS[a.env][1] + (400 if a.live else 0)
-    prefix = ENVS[a.env][2]
+    # Live runs get their own (git-ignored) files, so they never overwrite the committed offline results.
+    prefix = ("live_" if a.live else "") + ENVS[a.env][2]
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
     (out / "steps.jsonl").unlink(missing_ok=True)

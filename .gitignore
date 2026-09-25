@@ -6,3 +6,4 @@ results/runs/
 results/steps.jsonl
 *.egg-info/
 .env
+results/live_*
