@@ -7,14 +7,19 @@ agent follows a mechanical design through thousands of engineering change orders
 **build123d** (OpenCascade) scripts that produce real 3D parts. Each part is graded geometrically
 against the true spec. A [Memory State Inspector](#watch-it-work-the-memory-state-inspector) shows, step
 by step, how the agent keeps a ~1.3k-token working state while a naive transcript grows past 160k tokens.
-Every part is kept in three synchronized views: the structured state (the source of truth), a
-[Current Design Understanding](#current-design-understanding-three-views-of-one-design) written in plain
-English from that state, and the CAD geometry, which a 3D dashboard shows next to its reference.
+A design can start from a plain-English request, and every step after that stays traceable:
+
+**[Natural-Language Design Intent](#natural-language-design-intent-from-a-request-to-validated-cad) →
+Structured State → [Current Design Understanding](#current-design-understanding-three-views-of-one-design) →
+CAD Geometry**
+
+The request is interpreted into ordinary state operations. The structured state is the source of truth;
+the plain-English understanding and the validated 3D part are both derived from it.
 
 ```bash
 pip install -e ".[dev,aws,cad]"
 python -m lha.bench.run --env design --sizes 1000 --inspect   # watch it offline, no API key needed
-python -m lha.ui                                              # dashboard: inspector, benchmarks, 3D parts
+python -m lha.ui                                              # dashboard: design intent, inspector, benchmarks, 3D parts
 ```
 
 ![A plate the agent designed, shown in the dashboard with its spec, grade and build123d script](docs/images/cad-part-pass.png)
@@ -43,6 +48,7 @@ grows linearly instead of quadratically.
 
 - [Results at a glance](#results-at-a-glance)
 - [Watch it work: the Memory State Inspector](#watch-it-work-the-memory-state-inspector)
+- [Natural-Language Design Intent: from a request to validated CAD](#natural-language-design-intent-from-a-request-to-validated-cad)
 - [Current Design Understanding: three views of one design](#current-design-understanding-three-views-of-one-design)
 - [CAD modelling: what the agent builds](#cad-modelling-what-the-agent-builds)
 - [How it works](#how-it-works)
@@ -70,7 +76,7 @@ Offline, where scripted policies read exactly the prompt a model would see, so t
 | benchmark | messages | stateful peak prompt | naive peak prompt | stateful input tokens vs naive |
 |---|---:|---:|---:|---:|
 | IncidentDesk | 3,000 | **831** | 169,525 | **1.0%** |
-| DesignDesk (CAD) | 3,000 | **1,297** | 161,302 | **1.5%** |
+| DesignDesk (CAD) | 3,000 | **1,335** | 161,302 | **1.5%** |
 
 Live, with Claude Sonnet 4.5 on AWS Bedrock (DesignDesk, 50 messages, seed 0, two runs):
 
@@ -169,6 +175,60 @@ file. "Naive equivalent" is an estimate: the same goal plus every earlier reply 
 replayed as a transcript, measured with the same ~4 characters per token as everything else. The real
 naive agent, run separately, lands in the same range: 53.9k tokens at 1,000 messages against the
 estimate's 53k near the end of the inbox.
+
+---
+
+## Natural-Language Design Intent: from a request to validated CAD
+
+This is the entry point of the architecture: human intent → structured state. A user describes a part
+in plain English. The agent interprets the request into the same state operations it uses everywhere
+else, and the existing pipeline takes over from there:
+
+**Natural-Language Intent → Structured State → Current Design Understanding → CAD Geometry**
+
+![New design: a Design Intent box with example requests and Create Design](docs/images/design-intent-new.png)
+
+**Interpretation is explicit and conservative** (`lha/intent.py`):
+
+- Every requirement the request states becomes a `set_fact` with `source = design_intent`.
+- Every requirement it leaves open becomes an open question (`add_question`) and stays **unknown**. It is
+  never guessed, and the part can't be built until it is answered.
+- Conventions the interpreter does apply are shown as notes (for example, an M4 hole read as a 4.3 mm
+  clearance hole), as are requests this part family can't honour (six holes, another hole inset).
+- Two interpreters share one output schema. A deterministic rule-based one works offline. A model-based
+  one runs when a Bedrock (or OpenAI-compatible) model is configured, and its output is validated against
+  the same schema, falling back to the rules if the call fails.
+
+| request | interpretation |
+|---|---|
+| "Create a motor mounting plate 100 mm long, 80 mm wide and 4 mm thick from 6061 aluminum. Add four 5.3 mm through-holes, one near each corner, with the hole centers 6 mm from the adjacent edges." | length 100, width 80, thickness 4, hole Ø 5.3, al6061, all ← DESIGN INTENT |
+| "Make me an 80 × 60 mm steel sensor mounting plate with four M4 mounting holes." | length 80, width 60, hole Ø 4.3 (note: M4 clearance), steel; **thickness UNKNOWN** |
+| "Create a 95 × 45 × 6 mm rail clamp from ABS with four 4.3 mm mounting holes." | length 95, width 45, thickness 6, hole Ø 4.3, abs |
+
+**Provenance stays visible.** Every fact shows where its current value came from: ← DESIGN INTENT,
+← ECO-1847, ← USER (an answer), or ← ECO-7576 · recalled after a trip through the archive. The request is
+kept as the *original* design intent, and it is never a second source of truth. Engineering changes
+overwrite facts with `set_fact` as usual, and the old value goes to the archive.
+
+In the dashboard's **Design intent** view (the first thing the Memory inspector shows), a design reads as:
+
+| | |
+|---|---|
+| **Original design intent**: the request as written, and the agent's interpretation (✓ per stated value, ? per unknown) | **Current CAD**: the part in 3D over an independently built reference, with `.step` export |
+| **Current design understanding**: regenerated from the state after every change | **Validation**: geometry, dimensions, through-holes, valid solid, mass |
+| **Current structured state**: facts with provenance, open questions, and a box to apply a change or answer a question | **Design evolution**: intent → each change → current, with the CAD marked stale until rebuilt |
+
+![A design from intent: the request and its interpretation, the validated CAD, the current understanding, and the evolution through a user answer and ECO-1847](docs/images/design-intent.png)
+
+Each design is saved under `results/runs/intent_<part>-<time>/`: the original intent, the working state,
+the archive, a log of every operation, and the CAD files. It also appears in the CAD parts tab.
+
+**Over a long horizon.** `python -m lha.bench.run --env design --intent` starts one requested part from a
+design request instead of seeding ECOs. The agent (scripted or live) loads the request into its state at
+step 1, then hundreds of ECOs change that part while it is evicted and recalled. The inspector's
+**Original design intent** card traces intent → each ECO → the current spec that gets built:
+
+![Replay of an --intent run: the original request, the last engineering changes to that part, and its spec now](docs/images/design-intent-replay.png)
 
 ---
 
@@ -509,13 +569,13 @@ Each part scores the average of the two checks, and the run scores the average o
 
 | messages | agent | score | steps | peak prompt tok | total input tok | cost vs naive |
 |---:|---|---:|---:|---:|---:|---:|
-| 50 | **stateful** | 1.00 | 58 | 1,296 | 66,161 | **63.9%** |
+| 50 | **stateful** | 1.00 | 58 | 1,340 | 66,655 | **64.4%** |
 | 50 | naive | 1.00 | 55 | 3,530 | 103,540 | 100% |
-| 200 | **stateful** | 1.00 | 209 | 1,315 | 250,599 | **21.0%** |
+| 200 | **stateful** | 1.00 | 209 | 1,359 | 251,212 | **21.1%** |
 | 200 | naive | 1.00 | 205 | 11,484 | 1,190,696 | 100% |
-| 1,000 | **stateful** | 1.00 | 1,012 | 1,293 | 1,231,120 | **4.5%** |
+| 1,000 | **stateful** | 1.00 | 1,012 | 1,331 | 1,231,307 | **4.5%** |
 | 1,000 | naive | 1.00 | 1,005 | 53,897 | 27,159,643 | 100% |
-| 3,000 | **stateful** | 1.00 | 3,013 | 1,297 | 3,673,067 | **1.5%** |
+| 3,000 | **stateful** | 1.00 | 3,014 | 1,335 | 3,673,738 | **1.5%** |
 | 3,000 | naive | 1.00 | 3,005 | 161,302 | 241,781,104 | 100% |
 
 The stateful agent takes a few extra steps at larger sizes: those are `recall` calls fetching evicted specs. The
@@ -547,8 +607,10 @@ python -m lha.ui --results other/dir --port 9000 --no-browser
 
 A local web page (stdlib HTTP server, bound to localhost, no extra installs). It has three tabs.
 
-**Memory inspector** (opens first)
-- Pick any traced run: offline, live, or still running (marked LIVE, and it follows the run as it goes).
+**Memory inspector** (opens first), in two modes:
+- **Design intent** (the default): describe a part in plain English, see how it was interpreted, then build,
+  validate and change it. See [Natural-Language Design Intent](#natural-language-design-intent-from-a-request-to-validated-cad).
+- **Replay a run**: pick any traced run: offline, live, or still running (marked LIVE, and it follows the run as it goes).
 - Play/pause, a speed selector and a step slider move through the run one step at a time.
 - Each step shows the incoming event, the working state (facts for the part in focus marked ← UPDATED or
   ← RECALLED, the plan, open questions), the state mutation (an overwrite drawn as its ACTIVE and ARCHIVE
@@ -615,8 +677,12 @@ if you need both.
 git switch main
 git pull
 pip install -e ".[dev,aws,cad]"     # only needed when dependencies change; harmless otherwise
-pytest -q
+pytest -q                           # expect: 37 passed
 ```
+
+If `git pull` or `git switch` stops because of local changes, a benchmark run probably rewrote a tracked
+results file. Run `git status` to see which, then `git checkout -- results/` to discard it (or `git stash` to
+keep it) and pull again.
 
 Your `.env` and anything under `results/runs/` or `results/live_*` are git-ignored, so pulling never touches them.
 
@@ -699,6 +765,7 @@ step with `--live`), then a table.
 | `--budget N` | 450 incident, 700 design, +400 with `--live` | stateful working-state budget (tokens) |
 | `--skip-naive-above N` | never | skip the naive agent above N messages |
 | `--out DIR` | `results` | output directory |
+| `--intent` | off | DesignDesk: one requested part starts from a natural-language design request instead of ECOs |
 | `--inspect` | off | show the Memory State Inspector while the stateful agent runs |
 | `--inspect-speed N` | 30 offline, unthrottled live | steps per second for `--inspect` |
 
@@ -811,6 +878,8 @@ lha/
   tokens.py         ~4 chars/token estimate used for budgets and offline cost
   cli.py            lha run | state | recall | models
   inspect.py        Memory State Inspector (python -m lha.inspect)
+  intent.py         Natural-Language Design Intent: request -> set_fact operations (rules or model)
+  design_session.py a design from intent: state, archive, changes, build + validation
   describe.py       Current Design Understanding: plain-English view derived from the state
   bench/
     incident_desk.py  IncidentDesk env + scripted policies
@@ -821,7 +890,7 @@ lha/
     index.html      dashboard page (charts + three.js viewer)
 tinybird/           datasources (agent_steps, agent_archive) and endpoints
 results/            committed offline results; live_* and runs/ are git-ignored
-tests/              26 tests
+tests/              37 tests
 ```
 
 ---
@@ -846,7 +915,7 @@ Deploy Tinybird with the `tb` CLI (`tb deploy` from `tinybird/`), then set `TINY
 pytest -q
 ```
 
-The 26 tests cover:
+The 37 tests cover:
 
 - **Core:** overwrite and archive of stale facts, bad ops reported rather than raised, the notes ring
   buffer, compaction under budget with pins respected, JSON parsing from fenced or chatty replies,
@@ -859,6 +928,10 @@ The 26 tests cover:
   values, evictions, naive estimate, STEP export) and its rendering.
 - **Design descriptions:** the three example descriptions, the latest-change sentence with its ECO, and
   reporting values that aren't in the working state instead of guessing them.
+- **Design intent:** the complete and incomplete example requests (nothing guessed, M4 → 4.3 mm noted),
+  requests the part family can't honour, changes that take the new value ("6 mm to 4 mm", "ABS → Al6061"),
+  a session from intent to validated CAD with provenance and archive, an `--intent` benchmark run keeping
+  provenance through 150 messages, and the dashboard accepting design writes only as same-origin JSON.
 - **LLM clients:** the Messages API client sends no sampling parameters and returns only text blocks,
   and model IDs route to the right client.
 
@@ -894,9 +967,15 @@ CAD tests are skipped automatically if build123d isn't installed.
 
 ## 3-minute demo script
 
-Before the demo: `python -m lha.bench.run --env design --sizes 1000,3000`, then `python -m lha.ui`.
+Before the demo: `python -m lha.bench.run --env design --intent --sizes 1000` and
+`python -m lha.bench.run --env design --sizes 3000`, then `python -m lha.ui`.
 
-1. **History grows, state doesn't (60 s).** Open *Memory inspector* on `design_stateful-n1000-s0` and press
+0. **Human intent in (40 s).** The dashboard opens on *Design intent*. Click *Missing thickness* and
+   *Create Design*: every stated value becomes a fact tagged ← DESIGN INTENT, and thickness shows as UNKNOWN
+   rather than guessed, so *Build CAD* is disabled. Type "thickness 5 mm", then *Build CAD*: a validated 3D
+   part. Apply "ECO-1847: thickness 5 mm → 3 mm": the fact is overwritten (← ECO-1847), the understanding says
+   what changed, the CAD is marked stale, and *Rebuild* brings it back in line.
+1. **History grows, state doesn't (60 s).** Switch to *Replay a run*, pick `design_stateful-n1000-s0-intent`, and press
    Play. Point at the three things changing together: an ECO arrives, one fact is overwritten in place
    (← UPDATED) and the old value goes to the archive, and the two bars (naive transcript against the
    agent's prompt) pull apart until the reduction passes 97%.

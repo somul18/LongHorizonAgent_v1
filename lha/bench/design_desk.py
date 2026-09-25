@@ -88,14 +88,25 @@ class DesignDesk:
     truth: dict[str, str] = field(default_factory=dict)
     questions: dict[str, str] = field(default_factory=dict)  # qid -> part
     cursor: int = 0
+    # --intent: one part starts from a natural-language design request instead of seeding ECOs,
+    # so a run shows original intent -> hundreds of ECOs -> current state -> understanding -> CAD.
+    intent: bool = False
+    intent_part: str | None = None
+    intent_text: str = ""
 
     def __post_init__(self) -> None:
         rng = random.Random(self.seed)
         self.workspace = CadWorkspace(self.out_dir)
+        if self.intent:
+            self.intent_part = self.intent_part or PARTS[self.seed % len(PARTS)]
         # Every (part, attr) gets an initial value up front, so early facts exist.
         for part in PARTS:
             for attr, vals in ATTRS.items():
-                self._update(rng, part, attr, rng.choice(vals))
+                self._update(rng, part, attr, rng.choice(vals), silent=part == self.intent_part)
+        if self.intent_part:
+            from ..intent import intent_sentence
+
+            self.intent_text = intent_sentence(self.intent_part, self.spec(self.intent_part))
         while len(self.messages) < self.n_messages:
             if rng.random() < self.update_rate:
                 part, attr = rng.choice(PARTS), rng.choice(list(ATTRS))
@@ -110,16 +121,19 @@ class DesignDesk:
             if u := parse_update(m):
                 last_touch[u[0]] = i
                 churn[u[0]] += 1
-        stale_first = sorted(PARTS, key=lambda p: last_touch[p])
+        stale_first = sorted(PARTS, key=lambda p: last_touch.get(p, -1))
         by_churn = sorted(PARTS, key=lambda p: -churn[p])
         picks = list(dict.fromkeys([stale_first[0], *by_churn]))[: self.n_questions]
+        if self.intent_part and self.intent_part not in picks:
+            picks[-1] = self.intent_part  # the part that started as design intent is always built
         rng.shuffle(picks)
         self.questions = {f"q{i + 1}": p for i, p in enumerate(picks)}
 
-    def _update(self, rng: random.Random, part: str, attr: str, val) -> None:
+    def _update(self, rng: random.Random, part: str, attr: str, val, silent: bool = False) -> None:
         self.truth[f"{part}.{attr}"] = fmt_val(attr, val)
-        self.messages.append(TEMPLATES[attr].format(part=part, val=fmt_val(attr, val),
-                                                    n=rng.randint(1000, 9999), who=rng.choice(PEOPLE)))
+        msg = TEMPLATES[attr].format(part=part, val=fmt_val(attr, val), n=rng.randint(1000, 9999), who=rng.choice(PEOPLE))
+        if not silent:  # silent: the value comes from the design intent (same random draws either way)
+            self.messages.append(msg)
 
     # ------------------------------------------------------------------ reference
     def spec(self, part: str) -> dict:
@@ -144,7 +158,13 @@ class DesignDesk:
                 "must equal length, width, thickness and z_through_holes must be 4; if not, fix the script and "
                 "rebuild. When a part is right, set_fact <part>.mass_g to its mass so you do not build it again. "
                 'When every requested part has a mass fact, finish {"answer": {"q1": {"part": <name>, '
-                '"mass_g": <mass from cad_build>}, ...}}.')
+                '"mass_g": <mass from cad_build>}, ...}}.' + self.intent_goal())
+
+    def intent_goal(self) -> str:
+        if not self.intent_part:
+            return ""
+        return (f' ORIGINAL DESIGN INTENT for {self.intent_part} (a design request, not an ECO): "{self.intent_text}" '
+                f'Record each value it states as a fact with source "design_intent"; later ECOs overwrite them as usual.')
 
     def question_text(self) -> str:
         qs = "; ".join(f"{qid}: build {part}" for qid, part in self.questions.items())
@@ -185,6 +205,7 @@ class DesignDesk:
 # Deterministic "agents" that read the exact prompt a real model would get.
 # They make the benchmark reproducible offline; with --live a real model is used.
 
+INTENT_RE = re.compile(r'ORIGINAL DESIGN INTENT for ([\w-]+)[^"]*"([^"]+)"')
 REQUEST_RE = re.compile(r"(q\d+): build ([\w-]+)")
 BUILT_RE = re.compile(r"built '([\w-]+)': (\{.*\})")
 
@@ -217,8 +238,16 @@ def stateful_policy(system: str, prompt: str) -> str:
         ops.append({"op": "set_fact", "key": key, "value": val, "source": source, **({"pin": True} if pin else {})})
         facts[key] = val
 
+    if re.search(r"^# STEP 1$", prompt, re.M) and (intent := INTENT_RE.search(_section(prompt, "GOAL"))):
+        from ..intent import interpret_rules
+
+        for op in interpret_rules(intent[2], part=intent[1]).ops():  # human intent -> state operations
+            ops.append(op)
+            if op["op"] == "set_fact":
+                facts[op["key"]] = op["value"]
     if (u := parse_update(obs)) and "INBOX EMPTY" not in obs:
-        set_fact(f"{u[0]}.{u[1]}", u[2], "eco")
+        eco = re.search(r"\[(ECO-\d+)\]", obs)
+        set_fact(f"{u[0]}.{u[1]}", u[2], eco[1] if eco else "eco")  # provenance: the ECO that set it
     if "INBOX EMPTY" in obs:
         for qid, part in REQUEST_RE.findall(obs):
             ops.append({"op": "add_question", "text": f"{qid}: build {part}"})
@@ -226,12 +255,13 @@ def stateful_policy(system: str, prompt: str) -> str:
             ops += [{"op": "pin", "key": f"{part}.{a}"} for a in ATTRS if f"{part}.{a}" in facts]
     if obs.startswith("recall("):
         # Newest archived value wins, but never overwrite a live fact (it is newer than any eviction).
-        best: dict[str, tuple[int, str]] = {}
-        for step, key, val in re.findall(r"\[step (\d+)\] (?:evicted|dropped)_fact ([\w.-]+) = \"([^\"]*)\"", obs):
-            if key not in facts and int(step) >= best.get(key, (-1, ""))[0]:
-                best[key] = (int(step), val)
-        for key, (_, val) in best.items():
-            set_fact(key, val, "recall", pin=True)
+        best: dict[str, tuple[int, str, str]] = {}
+        for step, key, val, src in re.findall(
+                r"\[step (\d+)\] (?:evicted|dropped)_fact ([\w.-]+) = \"([^\"]*)\"(?: \(src: ([^)]*)\))?", obs):
+            if key not in facts and int(step) >= best.get(key, (-1, "", ""))[0]:
+                best[key] = (int(step), val, src)
+        for key, (_, val, src) in best.items():  # a recalled fact keeps where it came from
+            set_fact(key, val, f"{src} via recall" if src else "recall", pin=True)
     if (b := BUILT_RE.search(obs)) and "mass_g" in b[2]:
         set_fact(f"{b[1]}.mass_g", str(json.loads(b[2])["mass_g"]), "cad_build", pin=True)
 
@@ -272,6 +302,11 @@ def naive_policy(system: str, prompt: str) -> str:
         return json.dumps({"thought": "keep draining", "action": {"tool": "next_message", "args": {}}})
     requests = list(dict.fromkeys(requests))
     latest: dict[str, str] = {}
+    if intent := INTENT_RE.search(prompt):
+        from ..intent import interpret_rules
+
+        it = interpret_rules(intent[2], part=intent[1])
+        latest.update({f"{it.part}.{a}": v for a, v in it.facts.items()})
     built: dict[str, float] = {}
     for line in prompt.splitlines():
         if " next_message -> " in line and (u := parse_update(line)):

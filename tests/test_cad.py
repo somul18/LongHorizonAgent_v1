@@ -107,7 +107,8 @@ def test_memory_inspector_trace_and_views(tmp_path):
 
     ins = Inspector(run_dir.name, 120, summary)
     frames = [ins.feed(r) for r in recs]
-    assert "← UPDATED" in "".join(frames) and "Evicted to archive" in "".join(frames)
+    assert "UPDATED" in "".join(frames) and "Evicted to archive" in "".join(frames)
+    assert re.search(r"← ECO-\d+", "".join(frames))  # every fact shows where it came from
     assert "└─ ARCHIVE" in "".join(frames)  # an overwrite forks: new value active, old value archived
     assert re.search(r"Recall operations\s+[1-9]", frames[-1]) and frames[0].startswith("DESIGNDESK")
     assert "Geometry validator" in frames[-1] and "score 1.00" in frames[-1]

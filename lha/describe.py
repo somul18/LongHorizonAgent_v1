@@ -74,7 +74,9 @@ def _material(v) -> tuple[str, str | None]:
 
 
 def describe_part(name: str, attrs: dict, *, last_change: Change | None = None, hole_inset: float | None = None,
-                  expected: tuple[str, ...] = ()) -> str:
+                  expected: tuple[str, ...] = (), missing: str = "archived") -> str:
+    """missing: why an expected value is absent: "archived" (evicted from the working state; the
+    agent can recall it) or "unspecified" (the design intent never stated it)."""
     """One paragraph about one part. ``attrs`` maps attribute -> value, straight from the state."""
     a = {k: v for k, v in attrs.items() if v not in (None, "")}
     kind = str(a.pop("type", "")) or _kind_from_name(name) or ("plate" if "thickness" in a else "part")
@@ -110,10 +112,13 @@ def describe_part(name: str, attrs: dict, *, last_change: Change | None = None, 
     if last_change is not None:
         sentences.append(_change_sentence(last_change))
     known = set(attrs) | {"type"}
-    missing = [_human(k) for k in expected if k not in known or attrs.get(k) in (None, "")]
-    if missing:
-        sentences.append(f"Not in the working state right now: {', '.join(missing)} "
-                         f"(archived; the agent has to recall {'it' if len(missing) == 1 else 'them'} before building).")
+    absent = [_human(k) for k in expected if k not in known or attrs.get(k) in (None, "")]
+    if absent and missing == "unspecified":
+        sentences.append(f"Missing requirement{'s' if len(absent) > 1 else ''}: {', '.join(absent)} "
+                         f"(not specified in the design intent; nothing is assumed).")
+    elif absent:
+        sentences.append(f"Not in the working state right now: {', '.join(absent)} "
+                         f"(archived; the agent has to recall {'it' if len(absent) == 1 else 'them'} before building).")
     extra = {k: v for k, v in a.items() if k not in {*PLATE_ATTRS, "height", "depth", "wall", "holes",
                                                       "mounting_holes", "mass_g"}}
     if extra:
@@ -143,6 +148,8 @@ def _change_sentence(c: Change) -> str:
     if c.attr == "material":
         return (f"The latest approved engineering change{src} switched the material from "
                 f"{_material(c.old)[0]} to {_material(c.new)[0]}.")
+    if c.old is None:  # the previous value was archived when the change arrived
+        return f"The latest approved engineering change{src} set the {_human(c.attr)} to {_qty(c.attr, c.new)}."
     old, new = _num(c.old), _num(c.new)
     verb = "changed" if old is None or new is None or old == new else "reduced" if new < old else "increased"
     return (f"The latest approved engineering change{src} {verb} the {_human(c.attr)} "
@@ -180,11 +187,14 @@ class DesignTracker:
     def feed(self, rec: dict) -> dict | None:
         """Update from one trace record; return {"part", "text"} for the part in focus (or None)."""
         eco = ECO.search(self._event)
+        srcs = rec.get("sources", {})
         for key, old, new in rec.get("changes", []):
-            if old is not None and old != new and "." in key:
-                part, attr = key.split(".", 1)
-                if attr != "mass_g":
-                    self.last[part] = Change(attr, old, new, eco[1] if eco else "")
+            src = srcs.get(key, "")
+            if old == new or "." not in key or "recall" in src or src in ("design_intent", "cad_build"):
+                continue  # a recall restores a value; the intent and builds are not engineering changes
+            part, attr = key.split(".", 1)
+            if attr != "mass_g" and (old is not None or src.startswith("ECO")):
+                self.last[part] = Change(attr, old, new, src if src.startswith("ECO") else (eco[1] if eco else ""))
         self.focus = focus_part(rec, self.focus)
         self._event = rec.get("observation", "") or ""
         if not self.focus:

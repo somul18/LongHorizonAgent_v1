@@ -104,8 +104,46 @@ class UI:
                 recs.append({**r, "design": view})
         m = re.search(r"-n(\d+)-", run_id)
         summary = self._summary(d)
-        return {"records": recs, "total_messages": int(m[1]) if m else None,
+        intent = json.loads((d / "intent.json").read_text()) if (d / "intent.json").exists() else None
+        return {"records": recs, "total_messages": int(m[1]) if m else None, "intent": intent,
                 "summary": summary or None, "done": bool(summary) or any(r["done"] for r in recs)}
+
+    # -------------------------------------------------------------- design intent sessions
+    def designs(self) -> list[dict]:
+        from ..design_session import DesignSession
+
+        return DesignSession.list(self.runs) if self.runs.is_dir() else []
+
+    def design(self, sid: str) -> dict:
+        from ..design_session import DesignSession
+
+        return DesignSession.load(self.runs, sid).view()
+
+    def design_create(self, body: dict) -> dict:
+        from ..design_session import DesignSession
+        from ..intent import interpret, interpret_rules
+
+        request = str(body.get("request", "")).strip()
+        if not request or len(request) > 2000:
+            raise ValueError("describe the part in 1 to 2,000 characters")
+        part = _safe_part(body.get("part"))
+        it = interpret_rules(request, part) if body.get("interpreter") == "rules" else interpret(request, part)
+        self.runs.mkdir(parents=True, exist_ok=True)
+        return DesignSession.create(request, self.runs, interpretation=it).view()
+
+    def design_change(self, body: dict) -> dict:
+        from ..design_session import DesignSession
+
+        s = DesignSession.load(self.runs, str(body.get("id", "")))
+        s.change(str(body.get("text", ""))[:500])
+        return s.view()
+
+    def design_build(self, body: dict) -> dict:
+        from ..design_session import DesignSession
+
+        s = DesignSession.load(self.runs, str(body.get("id", "")))
+        s.build()
+        return s.view()
 
     def mesh(self, run_id: str, part: str, kind: str) -> dict:
         d = self._run_dir(run_id)
@@ -152,6 +190,11 @@ class UI:
             return {}
         stamp = max((p.stat().st_mtime for p in cad.glob("*.brep")), default=0.0)
         return self._measures_cached(run_dir, stamp)
+
+
+def _safe_part(v) -> str | None:
+    s = re.sub(r"[^a-z0-9-]+", "-", str(v or "").lower()).strip("-")[:40]
+    return s or None
 
 
 def _b3d():
@@ -213,12 +256,36 @@ def make_handler(ui: UI):
                     return self._json(ui.run_detail(q.get("id", "")))
                 if u.path == "/api/trace":
                     return self._json(ui.trace(q.get("run", ""), int(q.get("after", 0) or 0)))
+                if u.path == "/api/designs":
+                    return self._json(ui.designs())
+                if u.path == "/api/design":
+                    return self._json(ui.design(q.get("id", "")))
                 if u.path == "/api/mesh":
                     return self._json(ui.mesh(q.get("run", ""), q.get("part", ""), q.get("kind", "agent")))
                 return self._json({"error": "not found"}, 404)
             except (FileNotFoundError, ValueError, KeyError) as e:
                 return self._json({"error": str(e)}, 404)
             except Exception as e:  # noqa: BLE001 - surface to the page, keep serving
+                return self._json({"error": f"{type(e).__name__}: {e}"}, 500)
+
+        def do_POST(self):
+            # Writes are only accepted as JSON from this page: a cross-site form or fetch can't set this
+            # content type without a CORS preflight (which is never answered), and the Origin must match.
+            origin = self.headers.get("Origin")
+            if self.headers.get("Content-Type", "").split(";")[0].strip() != "application/json" or \
+                    (origin and urlparse(origin).netloc != self.headers.get("Host")):
+                return self._json({"error": "forbidden"}, 403)
+            try:
+                length = min(int(self.headers.get("Content-Length", 0) or 0), 20_000)
+                body = json.loads(self.rfile.read(length) or b"{}")
+                route = {"/api/design": ui.design_create, "/api/design/change": ui.design_change,
+                         "/api/design/build": ui.design_build}.get(urlparse(self.path).path)
+                if not route:
+                    return self._json({"error": "not found"}, 404)
+                return self._json(route(body))
+            except (FileNotFoundError, ValueError, KeyError, json.JSONDecodeError) as e:
+                return self._json({"error": str(e)}, 400)
+            except Exception as e:  # noqa: BLE001
                 return self._json({"error": f"{type(e).__name__}: {e}"}, 500)
 
     return Handler
