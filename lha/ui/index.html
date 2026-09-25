@@ -115,6 +115,47 @@ pre { background: var(--surface-2); border-radius: 8px; padding: 12px; overflow:
 .empty { color: var(--text-secondary); padding: 24px; text-align: center; }
 .err { color: var(--critical); }
 details summary { cursor: pointer; color: var(--text-secondary); font-size: 13px; }
+
+/* ---------------- memory inspector */
+.insp-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px 20px; margin-bottom: 12px; }
+.insp-head h2 { font-size: 20px; margin: 0; letter-spacing: -0.01em; }
+.insp-head .meta { color: var(--text-secondary); font-size: 13px; }
+.insp-controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 16px; }
+.insp-controls input[type=range] { flex: 1; min-width: 200px; accent-color: var(--series-1); }
+.badge { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: var(--accent-wash); color: var(--series-1); letter-spacing: .04em; }
+.badge.live { background: rgba(208,59,59,0.12); color: var(--critical); }
+.insp-grid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 12px; }
+@media (max-width: 1000px) { .insp-grid { grid-template-columns: 1fr; } }
+.insp-col { display: grid; gap: 12px; align-content: start; }
+.card h3 { font-size: 12px; font-weight: 700; color: var(--text-secondary); margin: 0 0 8px; text-transform: uppercase; letter-spacing: .05em;
+  display: flex; justify-content: space-between; }
+.card h3 span { text-transform: none; letter-spacing: 0; font-weight: 500; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+.event-title { font-weight: 700; font-size: 15px; margin-bottom: 2px; }
+.event-change { font-size: 15px; } .event-change b { font-size: 17px; }
+.muted { color: var(--text-muted); }
+.facts td { padding: 4px 8px; font-size: 13px; } .facts td.v { text-align: right; font-variant-numeric: tabular-nums; }
+.facts tr.hl td { background: rgba(237,161,0,0.13); }
+.facts tr.rc td { background: rgba(12,163,12,0.12); }
+.tag { font-size: 11px; font-weight: 700; margin-left: 6px; }
+.tag.up { color: #b77900; } .tag.rc { color: var(--good-text); }
+.plan div { padding: 2px 0; } .sub2 { color: var(--text-secondary); font-size: 12px; margin: 10px 0 4px; font-weight: 600; }
+.ops div { padding: 1px 0; white-space: pre-wrap; word-break: break-word; }
+.ops .arch { color: #c25a1c; } .ops .rest { color: var(--good-text); } .ops .err { color: var(--critical); }
+.mem { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; }
+.mem .k { color: var(--text-secondary); font-size: 12px; } .mem .v { font-size: 22px; font-weight: 650; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.bars { display: grid; grid-template-columns: 56px 1fr 64px; gap: 6px 10px; align-items: center; margin-top: 12px; font-size: 13px; }
+.bars .track { height: 14px; background: var(--surface-2); border-radius: 4px; overflow: hidden; }
+.bars .fill { height: 100%; border-radius: 4px; transition: width .15s linear; }
+.bars .n { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+.pipe { display: grid; justify-items: start; gap: 2px; }
+.pipe .node { border: 1px solid var(--border); background: var(--surface-2); border-radius: 8px; padding: 6px 12px; font-size: 13px; }
+.pipe .node b { font-variant-numeric: tabular-nums; }
+.pipe .arrow { color: var(--text-muted); padding-left: 18px; line-height: 1; }
+.checks { margin-top: 10px; display: grid; gap: 4px; font-size: 13px; }
+.checks .row { display: grid; grid-template-columns: 120px repeat(3, max-content); gap: 4px 16px; align-items: center; }
+@media (max-width: 700px) { .checks .row { grid-template-columns: 1fr; } }
+.checks .row .name { font-weight: 600; }
 </style>
 <script type="importmap">
 { "imports": {
@@ -127,7 +168,8 @@ details summary { cursor: pointer; color: var(--text-secondary); font-size: 13px
 <header>
   <h1>LHA Bench</h1>
   <nav role="tablist">
-    <button role="tab" data-tab="bench" aria-selected="true">Benchmarks</button>
+    <button role="tab" data-tab="insp" aria-selected="true">Memory inspector</button>
+    <button role="tab" data-tab="bench" aria-selected="false">Benchmarks</button>
     <button role="tab" data-tab="parts" aria-selected="false">CAD parts</button>
   </nav>
   <div class="spacer"></div>
@@ -136,7 +178,25 @@ details summary { cursor: pointer; color: var(--text-secondary); font-size: 13px
 </header>
 
 <main>
-  <section id="tab-bench">
+  <section id="tab-insp">
+    <div class="insp-head">
+      <h2 id="i-title">Memory inspector</h2>
+      <span class="meta" id="i-meta"></span>
+    </div>
+    <div class="insp-controls">
+      <label class="filters" style="margin:0"><select id="i-run" aria-label="Run"></select></label>
+      <button class="btn" id="i-play">Play</button>
+      <select id="i-speed" aria-label="Speed">
+        <option value="10">10 steps/s</option><option value="30" selected>30 steps/s</option>
+        <option value="100">100 steps/s</option><option value="400">400 steps/s</option>
+      </select>
+      <input type="range" id="i-step" min="0" max="0" value="0" aria-label="Step">
+      <span class="badge" id="i-badge"></span>
+    </div>
+    <div id="i-body"><div class="empty">No traced runs yet. Run: python -m lha.bench.run --env design --sizes 200</div></div>
+  </section>
+
+  <section id="tab-bench" hidden>
     <div class="filters">
       <label>Results file <select id="f-file"></select></label>
       <label>Messages <select id="f-size"></select></label>
@@ -225,7 +285,8 @@ matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { re
 document.querySelectorAll("nav button").forEach(b => b.onclick = () => showTab(b.dataset.tab));
 function showTab(t) {
   document.querySelectorAll("nav button").forEach(b => b.setAttribute("aria-selected", String(b.dataset.tab === t)));
-  $("#tab-bench").hidden = t !== "bench"; $("#tab-parts").hidden = t !== "parts";
+  $("#tab-bench").hidden = t !== "bench"; $("#tab-parts").hidden = t !== "parts"; $("#tab-insp").hidden = t !== "insp";
+  if (t === "bench") renderBench();
   if (t === "parts") viewer?.resize();
 }
 
@@ -550,11 +611,213 @@ class Viewer {
   }
 }
 
+
+// ------------------------------------------------------------------ memory inspector
+// Replays runs/<run>/trace.jsonl (written by the stateful agent every step), or follows it live.
+const I = { run: null, recs: [], views: [], idx: 0, playing: false, timer: null, poll: null, total: null, summary: null, done: false };
+const UNIT = { length: "mm", width: "mm", thickness: "mm", hole_diameter: "mm", mass_g: "g" };
+const withUnit = (k, v) => { const u = UNIT[k.split(".").pop()]; const s = typeof v === "string" ? v : JSON.stringify(v); return u ? `${s} ${u}` : s; };
+
+async function loadInspectorRuns() {
+  const sel = $("#i-run");
+  const traced = runs.filter(r => r.has_trace).sort((a, b) => b.mtime - a.mtime);
+  sel.replaceChildren(...traced.map(r => el("option", { value: r.run_id, text: r.run_id + (r.score != null ? `  (score ${r.score.toFixed(2)})` : "  (running)") })));
+  if (!traced.length) return;
+  if (!traced.find(r => r.run_id === I.run)) await openTrace(traced[0].run_id);
+  sel.value = I.run;
+}
+$("#i-run").onchange = e => openTrace(e.target.value);
+
+async function openTrace(run) {
+  stopPlay(); clearInterval(I.poll);
+  Object.assign(I, { run, recs: [], views: [], idx: 0, summary: null, done: false });
+  await pullTrace();
+  I.idx = I.done ? 0 : Math.max(0, I.recs.length - 1);
+  renderInspector();
+  if (!I.done) I.poll = setInterval(pullTrace, 1000);   // live: keep appending
+}
+
+async function pullTrace() {
+  const after = I.recs.length ? I.recs[I.recs.length - 1].step : 0;
+  let d;
+  try { d = await api(`/api/trace?run=${encodeURIComponent(I.run)}&after=${after}`); } catch (e) { $("#i-body").replaceChildren(el("div", { class: "empty err", text: e.message })); return; }
+  const atEnd = I.idx >= I.recs.length - 1;
+  for (const r of d.records) { I.recs.push(r); I.views.push(deriveView(I.views[I.views.length - 1], I.recs[I.recs.length - 2], r)); }
+  I.total = d.total_messages; I.summary = d.summary; I.done = d.done;
+  if (I.done) clearInterval(I.poll);
+  if (d.records.length && !I.playing && atEnd && I.recs.length) { I.idx = I.recs.length - 1; renderInspector(); }
+  if (!d.records.length && I.done) renderInspector();
+}
+
+function deriveView(pv, prev, r) {
+  // Context carried between steps: inbox position, the part in focus, the agent's builds so far.
+  const event = prev?.observation || "";
+  const v = { event, prevTool: prev?.tool, inbox: pv?.inbox || [0, null], entity: pv?.entity || null, builds: pv?.builds || {} };
+  const m = event.match(/^msg (\d+)\/(\d+):/); if (m) v.inbox = [+m[1], +m[2]];
+  const first = (r.ops || []).find(o => o.op === "set_fact")?.key;
+  const changed = r.changes.map(c => c[0]);
+  if (first || changed.length) v.entity = (first || changed.sort()[0]).split(".")[0];
+  const b = event.match(/built '([\w-]+)': (\{.*\})/);
+  if (b) { try { v.builds = { ...v.builds, [b[1]]: JSON.parse(b[2]) }; } catch {} }
+  return v;
+}
+
+function stopPlay() { I.playing = false; clearTimeout(I.timer); $("#i-play").textContent = "Play"; }
+$("#i-play").onclick = () => {
+  if (I.playing) return stopPlay();
+  if (I.idx >= I.recs.length - 1) I.idx = 0;
+  I.playing = true; $("#i-play").textContent = "Pause"; tick();
+};
+function tick() {
+  if (!I.playing) return;
+  if (I.idx >= I.recs.length - 1) { if (I.done) return stopPlay(); I.timer = setTimeout(tick, 500); return; }
+  const sp = +$("#i-speed").value;
+  const jump = Math.max(1, Math.round(sp / 30));             // at high speed skip frames, never events that build
+  let next = Math.min(I.recs.length - 1, I.idx + jump);
+  for (let k = I.idx + 1; k <= next; k++) if (["cad_build", "recall", "finish"].includes(I.recs[k].tool)) { next = k; break; }
+  I.idx = next; renderInspector();
+  const slow = ["cad_build", "finish"].includes(I.recs[I.idx].tool) ? 12 : I.recs[I.idx].tool === "recall" ? 4 : 1;
+  I.timer = setTimeout(tick, Math.max(16, 1000 * jump / sp) * slow);
+}
+$("#i-step").oninput = e => { stopPlay(); I.idx = +e.target.value; renderInspector(); };
+
+let lastChart = 0;
+function renderInspector() {
+  const r = I.recs[I.idx], v = I.views[I.idx];
+  const slider = $("#i-step"); slider.max = Math.max(0, I.recs.length - 1); slider.value = I.idx;
+  $("#i-badge").textContent = I.done ? "REPLAY" : "LIVE"; $("#i-badge").className = "badge" + (I.done ? "" : " live");
+  if (!r) return;
+  const [read, total] = v.inbox;
+  $("#i-title").textContent = `Long Horizon Agent: step ${fmt(r.step)}`;
+  $("#i-meta").textContent = [total ? `inbox ${fmt(read)} / ${fmt(total)}` : null, r.model].filter(Boolean).join(" · ");
+  const changed = new Set(r.changes.map(c => c[0]));
+  const recalled = new Set((r.ops || []).filter(o => o.op === "set_fact" && o.source === "recall").map(o => o.key));
+
+  // ---- incoming event
+  const ev = el("div", { class: "card" }, el("h3", { text: "Incoming event" }));
+  const text = (v.event.split("\n")[0] || "(start of run)").replace(/^msg \d+\/\d+: /, "");
+  const eco = text.match(/\[(ECO-\d+)\] ([\w-]+): (\w+) changed to ([\w.]+)/);
+  if (v.prevTool === "recall") ev.append(el("div", { class: "event-title", style: "color:var(--good-text)", text: "Recall result from the archive" }), el("div", { class: "mono", text: v.event.slice(0, 300) }));
+  else if (v.prevTool === "cad_build") ev.append(el("div", { class: "event-title", text: "Build result" }), el("div", { class: "mono", text: text.slice(0, 220) }));
+  else if (eco) {
+    const key = `${eco[2]}.${eco[3]}`, old = r.changes.find(c => c[0] === key)?.[1];
+    const line = el("div", { class: "event-change mono" }, `${key}: `, old != null ? `${withUnit(key, old)} → ` : "", el("b", { text: withUnit(key, eco[4]) }));
+    ev.append(el("div", { class: "event-title", text: `${eco[1]} APPROVED` }), line,
+      old == null ? el("div", { class: "muted", text: "not in the working state before: a first value, or the old one was archived" }) : null);
+  } else if (text.startsWith("INBOX EMPTY")) ev.append(el("div", { class: "event-title", text: "Inbox empty: build requests" }), el("div", { class: "mono", text: text.split("->")[1] || text }));
+  else ev.append(el("div", { class: "mono", text }), !r.changes.length && v.prevTool === "next_message" ? el("div", { class: "muted", text: "No state change: noise, a rejected proposal, or already known." }) : null);
+
+  // ---- working state
+  const ws = el("div", { class: "card" }, el("h3", {}, "Working state", el("span", { text: `~${fmt(r.state_tokens)} tokens` })));
+  const keys = Object.keys(r.facts).filter(k => v.entity && k.startsWith(v.entity + ".")).sort();
+  const pinned = new Set(r.pinned);
+  const ft = el("table", { class: "facts" });
+  for (const k of keys) {
+    const tr = el("tr", { class: recalled.has(k) ? "rc" : changed.has(k) ? "hl" : "" },
+      el("td", { class: "mono", text: k + (pinned.has(k) ? "  📌" : "") }), el("td", { class: "v mono", text: withUnit(k, r.facts[k]) }),
+      el("td", {}, recalled.has(k) ? el("span", { class: "tag rc", text: "← RECALLED" }) : changed.has(k) ? el("span", { class: "tag up", text: "← UPDATED" }) : null));
+    ft.append(tr);
+  }
+  const nParts = new Set(Object.keys(r.facts).map(k => k.split(".")[0])).size;
+  ws.append(el("div", { class: "sub2", text: "Current facts" }), keys.length ? ft : el("div", { class: "muted", text: "(none yet)" }),
+    el("div", { class: "muted", style: "margin-top:6px", text: `+ ${Object.keys(r.facts).length - keys.length} more facts across ${nParts} parts · ${r.archived_keys} keys archived` }));
+  if (r.tasks.length) {
+    const icon = { done: "✓", doing: "▸", blocked: "!", dropped: "×" };
+    ws.append(el("div", { class: "sub2", text: "Current plan" }), el("div", { class: "plan" }, ...r.tasks.map(([, title, st]) => el("div", {}, el("b", { text: (icon[st] || "○") + " " }), title))));
+  }
+  ws.append(el("div", { class: "sub2", text: "Open questions" }), el("div", { class: "plan" }, ...(r.questions.length ? r.questions.map(q => el("div", { text: "? " + q })) : [el("div", { class: "muted", text: "None" })])));
+
+  // ---- state operation
+  const op = el("div", { class: "card" }, el("h3", { text: "State operation" }));
+  const box = el("div", { class: "ops mono" });
+  for (const o of (r.ops || []).slice(0, 8)) {
+    let t;
+    if (o.op === "set_fact") t = `set_fact("${o.key}", ${JSON.stringify(o.value)}${o.pin ? ", pin=True" : ""})`;
+    else if (o.op === "update_task") t = `update_task("${o.id}", ${o.status})`;
+    else t = `${o.op}(${Object.entries(o).filter(([k]) => k !== "op").map(([k, x]) => JSON.stringify(x)).join(", ").slice(0, 70)})`;
+    box.append(el("div", { text: t }));
+  }
+  if (!(r.ops || []).length) box.append(el("div", { class: "muted", text: "none" }));
+  const sup = r.archived.filter(a => a[0] === "superseded_fact"), evi = r.archived.filter(a => a[0] === "evicted_fact" || a[0] === "dropped_fact");
+  if (sup.length) box.append(el("div", { class: "arch", text: "Superseded: " + sup.map(a => `${a[1]} = ${withUnit(a[1], a[2])} → archive`).join(", ") }));
+  if (evi.length) box.append(el("div", { class: "arch", text: "Evicted to archive (over budget): " + evi.map(a => a[1]).join(", ") }));
+  if (recalled.size) box.append(el("div", { class: "rest", text: "Restored from archive: " + [...recalled].join(", ") }));
+  if (r.op_errors?.length) box.append(el("div", { class: "err", text: "op errors: " + r.op_errors.join("; ") }));
+  if (r.parse_error) box.append(el("div", { class: "err", text: "Reply was not valid JSON; the error goes back to the model next step." }));
+  const a = r.args || {};
+  const action = r.tool === "cad_build" ? `cad_build("${a.name}", material="${a.material || ""}") + build123d script`
+    : r.tool === "recall" ? `recall("${a.query || ""}")` : r.tool === "finish" ? "finish(answer)" : `${r.tool}()`;
+  box.append(el("div", { class: "muted", style: "margin-top:6px", text: "Action: " + action }));
+  op.append(box);
+
+  // ---- memory
+  const red = r.naive_tokens ? 100 * (1 - r.prompt_tokens / r.naive_tokens) : 0;
+  const tile = (k, val) => el("div", {}, el("div", { class: "k", text: k }), el("div", { class: "v", text: val }));
+  const mem = el("div", { class: "card" }, el("h3", { text: "Memory" }),
+    el("div", { class: "mem" }, tile("Events processed", fmt(r.step)), tile("Active context", fmtTok(r.prompt_tokens)),
+      tile("Archived items", fmt(r.archive_size)), tile("Naive equivalent (est.)", fmtTok(r.naive_tokens)), tile("Context reduction", red.toFixed(1) + "%")));
+  const top = Math.max(r.naive_tokens, r.prompt_tokens, 1);
+  const barRow = (name, n, color) => [el("div", { text: name }), el("div", { class: "track" }, (() => { const f = el("div", { class: "fill" }); f.style.width = Math.max(0.6, 100 * n / top) + "%"; f.style.background = css(color); return f; })()), el("div", { class: "n", text: fmtTok(n) })];
+  mem.append(el("div", { class: "bars" }, ...barRow("Naive", r.naive_tokens, "--series-2"), ...barRow("LHA", r.prompt_tokens, "--series-1")));
+  const chartBox = el("div", { class: "chart", style: "margin-top:14px" });
+  mem.append(el("div", { class: "sub2", text: "Prompt size at every step so far" }), chartBox);
+
+  // ---- build: the payoff
+  const building = ["cad_build", "finish"].includes(r.tool) || v.event.startsWith("INBOX EMPTY") || r.questions.length;
+  let build = null;
+  if (building) {
+    build = el("div", { class: "card" }, el("h3", { text: "Build" }));
+    const node = (...kids) => el("div", { class: "node" }, ...kids), arrow = () => el("div", { class: "arrow", text: "↓" });
+    const part = r.tool === "cad_build" ? a.name : Object.keys(v.builds).pop();
+    build.append(el("div", { class: "pipe" },
+      node(el("b", { text: fmt(read || r.step) }), " historical events"), arrow(),
+      node(el("b", { text: `~${fmt(r.state_tokens)}` }), " token working state ", el("span", { class: "muted", text: `(naive transcript ~${fmtTok(r.naive_tokens)})` })), arrow(),
+      node(`CAD agent (${r.model}) writes a build123d script`), arrow(),
+      node("build123d / OpenCascade → ", el("b", { text: part ? part + ".step" : "part" })), arrow(),
+      node("Geometry validator")));
+    const checks = el("div", { class: "checks" });
+    for (const [name, m] of Object.entries(v.builds)) {
+      const spec = ["length", "width", "thickness"].map(x => r.facts[`${name}.${x}`]);
+      const dimsOk = spec.every((sv, i) => sv != null && Math.abs(+sv - m.bbox_mm[i]) < 0.01);
+      const holes = m.z_through_holes ?? m.cyl_faces;
+      checks.append(el("div", { class: "row" }, el("span", { class: "name", text: name }),
+        status(dimsOk, `dimensions ${m.bbox_mm.join("×")} mm`, `dimensions ${m.bbox_mm.join("×")} vs spec ${spec.join("×")}`),
+        status(holes === 4, `${holes}/4 through-holes`, `${holes}/4 through-holes`), status(m.valid, `${m.mass_g ?? "?"} g`, "invalid solid")));
+    }
+    if (Object.keys(v.builds).length) build.append(el("div", { class: "sub2", text: "Agent's own checks (against its working state)" }), checks);
+    const grade = r.done && I.summary?.grade;
+    if (grade) {
+      const g = el("div", { class: "checks" });
+      for (const x of Object.values(grade)) g.append(el("div", { class: "row" }, el("span", { class: "name", text: x.part }),
+        status(x.geometry, "geometry & dimensions", "geometry & dimensions"), status(x.mass, "mass & material", "mass & material")));
+      build.append(el("div", { class: "sub2", text: `Validator against the true spec · score ${I.summary.score.toFixed(2)}` }), g,
+        el("button", { class: "btn", style: "margin-top:12px", onclick: () => { showTab("parts"); selectRun(I.run); }, text: "Open the parts in 3D" }));
+    }
+  }
+
+  $("#i-body").replaceChildren(el("div", { class: "insp-grid" },
+    el("div", { class: "insp-col" }, ev, ws, op), el("div", { class: "insp-col" }, mem, build)));
+  // the chart is the heaviest part: redraw it at most ~8 times a second while playing
+  const now = performance.now();
+  if (!I.playing || now - lastChart > 120 || r.done) { lastChart = now; drawInspChart(chartBox); I.lastChartEl = chartBox; }
+  else if (I.lastSvg) chartBox.append(I.lastSvg);
+}
+
+function drawInspChart(box) {
+  const upto = I.recs.slice(0, I.idx + 1);
+  lineChart(box, [
+    { name: "naive (est.)", color: css("--series-2"), ys: upto.map(x => x.naive_tokens) },
+    { name: "LHA", color: css("--series-1"), ys: upto.map(x => x.prompt_tokens) },
+  ], { xLabel: "step", height: 220, xs: null });
+  I.lastSvg = box.firstChild;
+}
+
 // ------------------------------------------------------------------ boot
-$("#refresh").onclick = async () => { await Promise.all([loadResults(), loadRuns()]); if (curRun) selectRun(curRun); };
+$("#refresh").onclick = async () => { await Promise.all([loadResults(), loadRuns()]); await loadInspectorRuns(); if (curRun) selectRun(curRun); };
 new ResizeObserver(() => renderBench()).observe($("#chart-curve"));
 applyTheme();
 await Promise.all([loadResults(), loadRuns()]);
+await loadInspectorRuns();
 </script>
 </body>
 </html>

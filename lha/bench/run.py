@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
+import time
 from pathlib import Path
 
 from ..agent import NaiveAgent, StatefulAgent
@@ -33,7 +34,9 @@ ENVS = {
 }
 
 
-def run_one(kind: str, n: int, seed: int, budget: int, live: bool, out: Path, env_name: str = "incident") -> dict:
+def run_one(kind: str, n: int, seed: int, budget: int, live: bool, out: Path, env_name: str = "incident",
+            inspect_speed: float | None = None) -> dict:
+    """inspect_speed: render the Memory State Inspector for the stateful agent (steps/second; 0 = as fast as it runs)."""
     mod = ENVS[env_name][0]()
     run_id = f"{'live_' if live else ''}{ENVS[env_name][2]}{kind}-n{n}-s{seed}"  # live runs never overwrite offline ones
     if env_name == "design":
@@ -46,11 +49,27 @@ def run_one(kind: str, n: int, seed: int, budget: int, live: bool, out: Path, en
         llm = ScriptedLLM(mod.stateful_policy if kind == "stateful" else mod.naive_policy, name=f"scripted-{kind}")
     shutil.rmtree(out / "runs" / run_id, ignore_errors=True)  # benchmarks start fresh (agents would resume)
     sinks = [JsonlSink(out / "steps.jsonl"), *sinks_from_env()]
+    inspecting = inspect_speed is not None and kind == "stateful"
     common = dict(llm=llm, tools=ToolBox(env.tools()), goal=env.goal(), run_dir=out / "runs",
-                  run_id=run_id, sinks=sinks, max_steps=n + 60, verbose=live)  # live runs are slow: show each step
+                  run_id=run_id, sinks=sinks, max_steps=n + 60,
+                  verbose=live and not inspecting)  # live runs are slow: show each step
+    held: list[dict] = []
+    if inspecting:
+        from ..inspect import Inspector, show
+
+        inspector = Inspector(run_id, n)
+
+        def observe(rec: dict) -> None:
+            if rec["done"]:
+                held.append(rec)  # the last frame waits for the grade below
+                return
+            show(inspector.feed(rec))
+            if inspect_speed:
+                time.sleep(1 / inspect_speed)
     if kind == "stateful":
         agent = StatefulAgent(**common, compactor=Compactor(budget_tokens=budget,
-                              summarizer=summarizer_from_env() if live else None))
+                              summarizer=summarizer_from_env() if live else None),
+                              observers=[observe] if inspecting else [])
     else:
         agent = NaiveAgent(**common)
     answer = agent.run()
@@ -68,9 +87,14 @@ def run_one(kind: str, n: int, seed: int, budget: int, live: bool, out: Path, en
     if env_name == "design":
         summary["grade"] = env.grade(answer)
         summary["spec"] = {part: env.spec(part) for part in env.questions.values()}
+        export = {t.name: t for t in env.workspace.tools()}["cad_export"]
+        summary["step_files"] = [export.fn({"name": p, "format": "step"}).split(" -> ")[-1] for p in env.workspace.parts]
     run_dir = out / "runs" / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "summary.json").write_text(json.dumps(summary, indent=1, default=str))
+    if held:
+        inspector.summary = summary
+        show(inspector.feed(held[-1]))
     return row
 
 
@@ -84,6 +108,10 @@ def main(argv=None) -> None:
     ap.add_argument("--live", action="store_true", help="use a real model from env instead of scripted policies")
     ap.add_argument("--out", default="results")
     ap.add_argument("--skip-naive-above", type=int, default=10**9, help="naive gets expensive fast with --live")
+    ap.add_argument("--inspect", action="store_true",
+                    help="show the Memory State Inspector while the stateful agent runs (see python -m lha.inspect)")
+    ap.add_argument("--inspect-speed", type=float, default=None,
+                    help="steps/second for --inspect (default: 30 offline, as fast as it runs with --live)")
     a = ap.parse_args(argv)
     # Real models write longer fact lines (sources, notes, a focus) than the scripted policies,
     # so live runs get more room by default; the prompt still stays flat.
@@ -99,7 +127,8 @@ def main(argv=None) -> None:
             for kind in ("stateful", "naive"):
                 if kind == "naive" and n > a.skip_naive_above:
                     continue
-                r = run_one(kind, n, seed, budget, a.live, out, a.env)
+                speed = (a.inspect_speed if a.inspect_speed is not None else 0 if a.live else 30) if a.inspect else None
+                r = run_one(kind, n, seed, budget, a.live, out, a.env, speed)
                 rows.append(r)
                 print(f"{kind:9s} n={n:<5d} seed={seed} score={r['score']:.2f} steps={r['steps']:<5d} "
                       f"peak_prompt={r['peak_prompt_tokens']:<7d} total_in={r['total_input_tokens']:,}")

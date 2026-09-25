@@ -30,6 +30,7 @@ grows linearly instead of quadratically.
 ## Contents
 
 - [Results at a glance](#results-at-a-glance)
+- [Watch it work: the Memory State Inspector](#watch-it-work-the-memory-state-inspector)
 - [CAD modelling: what the agent builds](#cad-modelling-what-the-agent-builds)
 - [How it works](#how-it-works)
 - [The benchmarks](#the-benchmarks)
@@ -56,7 +57,7 @@ Offline, where scripted policies read exactly the prompt a model would see, so t
 | benchmark | messages | stateful peak prompt | naive peak prompt | stateful input tokens vs naive |
 |---|---:|---:|---:|---:|
 | IncidentDesk | 3,000 | **831** | 169,525 | **1.0%** |
-| DesignDesk (CAD) | 3,000 | **1,277** | 161,302 | **1.5%** |
+| DesignDesk (CAD) | 3,000 | **1,297** | 161,302 | **1.5%** |
 
 Live, with Claude Sonnet 4.5 on AWS Bedrock (DesignDesk, 50 messages, seed 0, two runs):
 
@@ -75,6 +76,84 @@ it had already built. Both runs came before the fixes described under
 At 50 messages the live budget also held every fact, so these runs didn't exercise eviction and recall.
 Longer horizons (`--sizes 200,1000`) and more seeds are the next experiment. See
 [Limitations](#limitations-and-roadmap).
+
+---
+
+## Watch it work: the Memory State Inspector
+
+**History grows. State doesn't have to.** The inspector makes that visible while the agent runs. For
+every step it shows the incoming event, the working state the model actually sees, the state operation
+the event caused (what was overwritten, and what was superseded, evicted or recalled), and how big the
+prompt is against the transcript a naive agent would be carrying by then.
+
+A real frame, from step 822 of a 1,000-message DesignDesk run:
+
+```text
+LONG HORIZON AGENT — STEP 822            INBOX 821 / 1,000   scripted-stateful
+
+INCOMING EVENT
+──────────────────────────────────────────────────────────────────────────────
+ECO-1049 APPROVED
+sensor-bracket.hole_diameter: 5.3 mm → 3.2 mm
+
+WORKING STATE                                                      ~691 tokens
+──────────────────────────────────────────────────────────────────────────────
+CURRENT FACTS
+  sensor-bracket.hole_diameter              3.2 mm  ← UPDATED
+  sensor-bracket.length                      80 mm
+  + 18 more facts across 7 parts · 131 keys archived
+CURRENT PLAN
+  ▸ Track engineering changes
+  ○ Produce final CAD
+  ○ Validate geometry
+OPEN QUESTIONS
+  None
+
+STATE OPERATION
+──────────────────────────────────────────────────────────────────────────────
+set_fact("sensor-bracket.hole_diameter", "3.2")
+Superseded:  sensor-bracket.hole_diameter = 5.3 mm → archive
+Action:  next_message()
+
+MEMORY
+──────────────────────────────────────────────────────────────────────────────
+Events processed                               822
+Active context                        1,225 tokens
+Archived items                               1,080
+Naive equivalent (est.)              53,074 tokens
+Context reduction                            97.7%
+
+Naive   ████████████████████████████████████████████████████████████ 53.1K
+LHA     █ 1.2K
+
+prompt size over the run, same scale:
+Naive   ▁▁▁▁▂▂▂▂▂▂▂▂▂▃▃▃▃▃▃▃▃▄▄▄▄▄▄▄▄▄▅▅▅▅▅▅▅▅▅▆▆▆▆▆▆▆▆▆▇▇▇▇▇▇▇▇████
+LHA     ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+```
+
+When the inbox runs out and the build requests arrive, a **BUILD** panel shows the path from thousands of
+events to a checked part: historical events → ~1.3k-token working state → CAD agent → build123d →
+`part.step` → the agent's own dimension and through-hole checks → the geometry validator's verdict
+against the true spec.
+
+```bash
+python -m lha.bench.run --env design --sizes 1000 --inspect          # offline, animated at 30 steps/s
+python -m lha.inspect design_stateful-n1000-s0 --speed 60              # replay any finished run
+python -m lha.bench.run --env design --live --sizes 200 --skip-naive-above 200 --inspect   # live model
+python -m lha.inspect live_design_stateful-n200-s0 --follow            # watch a live run from a 2nd terminal
+```
+
+The same view is the first tab of the dashboard (`python -m lha.ui`), with play/pause, a speed selector, a
+step slider, a chart of prompt size at every step, and a button to open the built parts in 3D. It follows
+live runs as they write their trace.
+
+![Memory inspector tab: the working state, the state operation, memory against the naive transcript, and the build pipeline ending in the validator](docs/images/memory-inspector.png)
+
+Every stateful run writes `runs/<run_id>/trace.jsonl` with one record per step, and both views read that
+file. "Naive equivalent" is an estimate: the same goal plus every earlier reply and tool result
+replayed as a transcript, measured with the same ~4 characters per token as everything else. The real
+naive agent, run separately, lands in the same range: 53.9k tokens at 1,000 messages against the
+estimate's 53k near the end of the inbox.
 
 ---
 
@@ -373,16 +452,18 @@ Each part scores the average of the two checks, and the run scores the average o
 
 | messages | agent | score | steps | peak prompt tok | total input tok | cost vs naive |
 |---:|---|---:|---:|---:|---:|---:|
-| 50 | **stateful** | 1.00 | 58 | 1,289 | 65,203 | **63.0%** |
+| 50 | **stateful** | 1.00 | 58 | 1,296 | 66,161 | **63.9%** |
 | 50 | naive | 1.00 | 55 | 3,530 | 103,540 | 100% |
-| 200 | **stateful** | 1.00 | 207 | 1,294 | 247,162 | **20.8%** |
+| 200 | **stateful** | 1.00 | 209 | 1,315 | 250,599 | **21.0%** |
 | 200 | naive | 1.00 | 205 | 11,484 | 1,190,696 | 100% |
-| 1,000 | **stateful** | 1.00 | 1,012 | 1,273 | 1,229,559 | **4.5%** |
+| 1,000 | **stateful** | 1.00 | 1,012 | 1,293 | 1,231,120 | **4.5%** |
 | 1,000 | naive | 1.00 | 1,005 | 53,897 | 27,159,643 | 100% |
-| 3,000 | **stateful** | 1.00 | 3,012 | 1,277 | 3,669,466 | **1.5%** |
+| 3,000 | **stateful** | 1.00 | 3,013 | 1,297 | 3,673,067 | **1.5%** |
 | 3,000 | naive | 1.00 | 3,005 | 161,302 | 241,781,104 | 100% |
 
-The stateful agent takes a few extra steps at larger sizes: those are `recall` calls fetching evicted specs.
+The stateful agent takes a few extra steps at larger sizes: those are `recall` calls fetching evicted specs. The
+scripted agent also keeps a three-item plan (track changes → produce CAD → validate), as a real model is
+expected to, which is what the inspector's CURRENT PLAN shows.
 
 **What the live runs taught us.** The first live Sonnet run scored **0.00** for the stateful agent. The
 model keyed facts as `base-plate_width`, the tokenizer treated that as one word, every recall missed,
@@ -533,6 +614,8 @@ step with `--live`), then a table.
 | `--budget N` | 450 incident, 700 design, +400 with `--live` | stateful working-state budget (tokens) |
 | `--skip-naive-above N` | never | skip the naive agent above N messages |
 | `--out DIR` | `results` | output directory |
+| `--inspect` | off | show the Memory State Inspector while the stateful agent runs |
+| `--inspect-speed N` | 30 offline, unthrottled live | steps per second for `--inspect` |
 
 Outputs:
 
@@ -542,7 +625,7 @@ Outputs:
 | `results/design_report.md`, `results/design_results.json` | DesignDesk offline |
 | `results/live_*` | the same for live runs (git-ignored, so they never block `git pull`) |
 | `results/steps.jsonl` | one line per step for every run |
-| `results/runs/<run_id>/` | `state.json`, `archive.jsonl`, `summary.json`, and `cad/<part>.py` + `.brep` |
+| `results/runs/<run_id>/` | `state.json`, `archive.jsonl`, `trace.jsonl` (one inspector record per step), `summary.json`, and `cad/<part>.py` + `.brep` + `.step` |
 
 Run ids look like `design_stateful-n200-s0`. Live runs are prefixed `live_`.
 
@@ -642,6 +725,7 @@ lha/
   sinks.py          JSONL and Tinybird telemetry
   tokens.py         ~4 chars/token estimate used for budgets and offline cost
   cli.py            lha run | state | recall | models
+  inspect.py        Memory State Inspector (python -m lha.inspect)
   bench/
     incident_desk.py  IncidentDesk env + scripted policies
     design_desk.py    DesignDesk env, grading + scripted policies
@@ -651,7 +735,7 @@ lha/
     index.html      dashboard page (charts + three.js viewer)
 tinybird/           datasources (agent_steps, agent_archive) and endpoints
 results/            committed offline results; live_* and runs/ are git-ignored
-tests/              20 tests
+tests/              21 tests
 ```
 
 ---
@@ -676,7 +760,7 @@ Deploy Tinybird with the `tb` CLI (`tb deploy` from `tinybird/`), then set `TINY
 pytest -q
 ```
 
-The 20 tests cover:
+The 21 tests cover:
 
 - **Core:** overwrite and archive of stale facts, bad ops reported rather than raised, the notes ring
   buffer, compaction under budget with pins respected, JSON parsing from fenced or chatty replies,
@@ -685,7 +769,8 @@ The 20 tests cover:
   skipped, terminal values win, repository-root fallback).
 - **CAD:** build, measure and export tools; blind holes told apart from through-holes; geometry matching that ignores translation but catches a
   wrong hole size; DesignDesk end to end with eviction and recall; stale specs graded as wrong; the
-  dashboard's data layer (runs, grades, meshes, path-traversal rejection).
+  dashboard's data layer (runs, grades, meshes, path-traversal rejection); the inspector trace (overwrites with old
+  values, evictions, naive estimate, STEP export) and its rendering.
 - **LLM clients:** the Messages API client sends no sampling parameters and returns only text blocks,
   and model IDs route to the right client.
 
@@ -717,14 +802,19 @@ CAD tests are skipped automatically if build123d isn't installed.
 
 ## 3-minute demo script
 
-1. **The problem (30 s).** `python -m lha.bench.run --env design`, then open `python -m lha.ui`. On
-   *Prompt size per step* at 3,000 messages, the naive line climbs to 161k tokens while the stateful line
-   stays flat at about 1.3k: 1.5% of the cost.
-2. **What the agent sees (45 s).** `python -m lha.cli state <run>`, or the dashboard's *final working
-   state*. That is the whole memory: goal, current facts with sources, and breadcrumbs of what was archived.
-3. **Nothing is lost (30 s).** `python -m lha.cli recall <run> "motor-mount.width"` brings back an evicted
-   value. The Tinybird `fact_history` endpoint lists every value a key ever held.
-4. **It builds real parts (45 s).** Open *CAD parts*, rotate a part the agent built over the reference
-   outline, show its build123d script, and show a failing part turning see-through with a red outline.
-5. **Days-long runs (30 s).** Start `lha.cli run … --run-id demo`, press Ctrl-C, run it again with the same
-   `--run-id`, and the step counter continues where it stopped.
+Before the demo: `python -m lha.bench.run --env design --sizes 1000,3000`, then `python -m lha.ui`.
+
+1. **History grows, state doesn't (60 s).** Open *Memory inspector* on `design_stateful-n1000-s0` and press
+   Play. Point at the three things changing together: an ECO arrives, one fact is overwritten in place
+   (← UPDATED) and the old value goes to the archive, and the two bars (naive transcript against the
+   agent's prompt) pull apart until the reduction passes 97%.
+2. **Nothing is lost (30 s).** Keep playing into the build phase. The agent recalls specs it evicted
+   hundreds of steps earlier (← RECALLED, "Restored from archive").
+3. **It builds real parts (45 s).** The BUILD panel goes from 1,000 events to a ~1.3k-token state, to a
+   build123d script, to a `.step` file and the validator's ✓ geometry, ✓ mass. Click *Open the parts in 3D*
+   and rotate a part over its reference outline.
+4. **At scale (30 s).** *Benchmarks* tab at 3,000 messages: 161k tokens naive against 1.3k, 1.5% of the input tokens.
+5. **Days-long runs (15 s).** `lha.cli run … --run-id demo`, Ctrl-C, run it again with the same `--run-id`,
+   and the step counter continues where it stopped.
+
+For a live model, run `--live --sizes 200 --inspect` in one terminal (or follow it in the dashboard).
