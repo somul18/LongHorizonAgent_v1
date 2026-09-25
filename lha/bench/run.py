@@ -28,7 +28,7 @@ def _design_desk():
 # env name -> (module loader, default working-state budget, output file prefix)
 ENVS = {
     "incident": (lambda: incident_desk, 450, ""),
-    "design": (_design_desk, 600, "design_"),
+    "design": (_design_desk, 700, "design_"),  # budget includes the goal text and one CAD/recall observation
 }
 
 
@@ -72,7 +72,9 @@ def main(argv=None) -> None:
     ap.add_argument("--out", default="results")
     ap.add_argument("--skip-naive-above", type=int, default=10**9, help="naive gets expensive fast with --live")
     a = ap.parse_args(argv)
-    budget = a.budget or ENVS[a.env][1]
+    # Real models write longer fact lines (sources, notes, a focus) than the scripted policies,
+    # so live runs get more room by default; the prompt still stays flat.
+    budget = a.budget or ENVS[a.env][1] + (400 if a.live else 0)
     prefix = ENVS[a.env][2]
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)

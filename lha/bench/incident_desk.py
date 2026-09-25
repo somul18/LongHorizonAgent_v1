@@ -153,8 +153,9 @@ def stateful_policy(system: str, prompt: str) -> str:
     if obs.startswith("recall("):
         # Newest archived value for the key we asked about wins.
         best: dict[str, tuple[int, str]] = {}
-        for step, key, val in re.findall(r"\[step (\d+)\] (?:evicted|dropped)_fact ([\w.-]+): .*?\"value\": \"([^\"]*)\"", obs):
-            if int(step) >= best.get(key, (-1, ""))[0]:
+        for step, key, val in re.findall(r"\[step (\d+)\] (?:evicted|dropped)_fact ([\w.-]+) = \"([^\"]*)\"", obs):
+            # never overwrite a live fact: it was set after any eviction, so it is newer
+            if key not in facts and int(step) >= best.get(key, (-1, ""))[0]:
                 best[key] = (int(step), val)
         for key, (_, val) in best.items():
             ops.append({"op": "set_fact", "key": key, "value": val, "source": "recall", "pin": True})

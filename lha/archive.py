@@ -22,8 +22,19 @@ from typing import Any, Iterable, Protocol
 _WORD = re.compile(r"[a-z0-9_\-\.]+")
 
 
+_SPLIT = re.compile(r"[-_.]+")
+
+
 def _terms(text: str) -> list[str]:
-    return _WORD.findall(text.lower())
+    """Whole tokens plus their parts, so "base-plate_width", "base-plate.width" and
+    "base-plate width" all match each other (models do not name keys consistently)."""
+    out = []
+    for tok in _WORD.findall(text.lower()):
+        out.append(tok)
+        parts = [p for p in _SPLIT.split(tok) if p]
+        if len(parts) > 1:
+            out += parts
+    return out
 
 
 class Sink(Protocol):
@@ -78,6 +89,7 @@ class Archive:
         q = _terms(query)
         if not q:
             return []
+        qs = set(_WORD.findall(query.lower()))
         kinds = set(kinds) if kinds else None
         n = max(1, len(self.items))
         scored = []
@@ -86,6 +98,8 @@ class Archive:
                 continue
             tf = Counter(_terms(it.text()))
             score = sum(tf[t] / (tf[t] + 1.2) * math.log(1 + n / (1 + self._df[t])) for t in q if t in tf)
+            if score > 0 and it.key.lower() in qs:
+                score += 100.0  # the exact key the agent asked for beats partial word matches
             if score > 0:
                 scored.append((score, it.id, it))
         scored.sort(key=lambda x: (x[0], x[1]), reverse=True)

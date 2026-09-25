@@ -137,7 +137,9 @@ class DesignDesk:
                 "material of every part; ECO messages change them and only the latest ECO counts (proposals and "
                 "reviews change nothing). Every part is a rectangular plate length x width x thickness centred on "
                 f"the origin, with 4 through-holes of hole_diameter whose centres are {HOLE_INSET:g} mm in from both "
-                "edges at each corner. When the inbox is empty you get build requests: build each requested part "
+                "edges at each corner. Keep one fact per value, keyed <part>.<attr> (e.g. base-plate.thickness); "
+                "evicted facts come back with recall on that key. When the inbox is empty you get build requests: "
+                "pin the requested parts' facts, then build each requested part "
                 'with cad_build (name = the part, pass its material) and finish {"answer": {"q1": {"part": <name>, '
                 '"mass_g": <mass from cad_build>}, ...}}.')
 
@@ -222,7 +224,7 @@ def stateful_policy(system: str, prompt: str) -> str:
     if obs.startswith("recall("):
         # Newest archived value wins, but never overwrite a live fact (it is newer than any eviction).
         best: dict[str, tuple[int, str]] = {}
-        for step, key, val in re.findall(r"\[step (\d+)\] (?:evicted|dropped)_fact ([\w.-]+): .*?\"value\": \"([^\"]*)\"", obs):
+        for step, key, val in re.findall(r"\[step (\d+)\] (?:evicted|dropped)_fact ([\w.-]+) = \"([^\"]*)\"", obs):
             if key not in facts and int(step) >= best.get(key, (-1, ""))[0]:
                 best[key] = (int(step), val)
         for key, (_, val) in best.items():

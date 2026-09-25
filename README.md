@@ -55,16 +55,16 @@ agent must report the *current* values, including values last seen at the very s
 
 | messages | agent | score | peak prompt tok | total input tok | cost vs naive |
 |---:|---|---:|---:|---:|---:|
-| 50 | **stateful** | 1.00 | 817 | 39,240 | **50.3%** |
+| 50 | **stateful** | 1.00 | 831 | 40,005 | **51.3%** |
 | 50 | naive | 1.00 | 2,878 | 78,000 | 100% |
-| 200 | **stateful** | 1.00 | 817 | 161,963 | **14.2%** |
+| 200 | **stateful** | 1.00 | 876 | 164,966 | **14.5%** |
 | 200 | naive | 1.00 | 11,224 | 1,136,749 | 100% |
-| 1000 | **stateful** | 1.00 | 817 | 807,440 | **2.9%** |
+| 1000 | **stateful** | 1.00 | 831 | 821,481 | **2.9%** |
 | 1000 | naive | 1.00 | 56,087 | 28,079,688 | 100% |
-| 3000 | **stateful** | 1.00 | 881 | 2,423,130 | **1.0%** |
+| 3000 | **stateful** | 1.00 | 831 | 2,465,035 | **1.0%** |
 | 3000 | naive | 1.00 | 169,525 | 253,700,413 | 100% |
 
-- **The prompt stays flat.** The stateful agent's prompt is about 820 tokens at step 50 and at step 3,000.
+- **The prompt stays flat.** The stateful agent's prompt is about 830 tokens at step 50 and at step 3,000.
   The naive agent's prompt grows linearly, so its total cost grows quadratically. At 3,000 steps it
   would no longer fit in most context windows.
 - **Nothing is lost.** With this budget the compactor evicts facts. At answer time, the agent
@@ -86,16 +86,16 @@ Grading is geometric. The built solid must match a reference solid, meaning the 
 an empty symmetric difference up to translation. The reported mass must be within 1%. A single stale
 thickness from 2,000 messages ago produces a wrong part.
 
-`python -m lha.bench.run --env design` (offline, deterministic, runs in about 10 s; working-state budget of 600 tokens):
+`python -m lha.bench.run --env design` (offline, deterministic, runs in about 10 s; working-state budget of 700 tokens, 1,100 with `--live`):
 
 | messages | agent | score | peak prompt tok | total input tok | cost vs naive |
 |---:|---|---:|---:|---:|---:|
-| 200 | **stateful** | 1.00 | 1,139 | 226,604 | **19.4%** |
-| 200 | naive | 1.00 | 11,359 | 1,168,482 | 100% |
-| 1000 | **stateful** | 1.00 | 1,276 | 1,114,813 | **4.1%** |
-| 1000 | naive | 1.00 | 53,772 | 27,050,815 | 100% |
-| 3000 | **stateful** | 1.00 | 1,301 | 3,328,129 | **1.4%** |
-| 3000 | naive | 1.00 | 161,177 | 241,455,771 | 100% |
+| 200 | **stateful** | 1.00 | 1,230 | 244,726 | **20.8%** |
+| 200 | naive | 1.00 | 11,399 | 1,176,682 | 100% |
+| 1000 | **stateful** | 1.00 | 1,230 | 1,222,965 | **4.5%** |
+| 1000 | naive | 1.00 | 53,812 | 27,091,015 | 100% |
+| 3000 | **stateful** | 1.00 | 1,230 | 3,664,826 | **1.5%** |
+| 3000 | naive | 1.00 | 161,217 | 241,575,971 | 100% |
 
 The CAD tools (`lha/cad.py`) are ordinary `Tool`s, so any agent can use them: `cad_build`, `cad_measure`,
 `cad_list` and `cad_export` (STEP/STL). Each build is answered with one line of checkable numbers
