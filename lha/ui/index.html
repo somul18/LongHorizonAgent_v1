@@ -117,6 +117,8 @@ pre { background: var(--surface-2); border-radius: 8px; padding: 12px; overflow:
 details summary { cursor: pointer; color: var(--text-secondary); font-size: 13px; }
 
 /* ---------------- memory inspector */
+.understanding { border-left: 3px solid var(--series-1); }
+.und-text { font-size: 15px; line-height: 1.55; margin: 0 0 8px; }
 .ops .fork { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; margin: 2px 0 8px; background: var(--surface-2); }
 .fork-change { font-size: 16px; margin: 4px 0 8px; }
 .fork-split { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
@@ -496,14 +498,17 @@ async function selectRun(id) {
     curPart = p;
     bar.querySelectorAll("button").forEach(b => b.setAttribute("aria-selected", String(b.dataset.part === p)));
     const g = Object.values(grade).find(x => x.part === p), info = d.parts[p] || {};
-    renderSide(side, p, g, spec[p], info, sm.answer);
+    renderSide(side, p, g, spec[p], info, sm.answer, (d.descriptions || {})[p]);
     await viewer.load(id, p, { agent: !!info.has_mesh, ref: !!spec[p], mismatch: g ? !g.geometry : false });
   };
   showPart(names[0]);
 }
 
-function renderSide(side, part, g, spec, info, answer) {
+function renderSide(side, part, g, spec, info, answer, understanding) {
   side.replaceChildren();
+  if (understanding) side.append(el("div", { class: "section-title", text: "Current design understanding" }),
+    el("p", { class: "und-text", style: "margin:0 0 4px", text: understanding }),
+    el("p", { class: "sub", style: "margin:0 0 8px", text: "From the agent's final working state (its view of the spec; compare with the grade below)." }));
   if (g) {
     side.append(el("div", { class: "section-title", text: "Grade" }),
       el("dl", { class: "kv" }, el("dt", { text: "geometry" }), el("dd", {}, status(g.geometry)),
@@ -668,6 +673,7 @@ function deriveView(pv, prev, r) {
   const first = (r.ops || []).find(o => o.op === "set_fact")?.key;
   const changed = r.changes.map(c => c[0]);
   if (first || changed.length) v.entity = (first || changed.sort()[0]).split(".")[0];
+  if (r.design?.part) v.entity = r.design.part;
   const b = event.match(/built '([\w-]+)': (\{.*\})/);
   if (b) { try { v.builds = { ...v.builds, [b[1]]: JSON.parse(b[2]) }; } catch {} }
   return v;
@@ -738,6 +744,15 @@ function renderInspector() {
     ws.append(el("div", { class: "sub2", text: "Current plan" }), el("div", { class: "plan" }, ...r.tasks.map(([, title, st]) => el("div", {}, el("b", { text: (icon[st] || "○") + " " }), title))));
   }
   ws.append(el("div", { class: "sub2", text: "Open questions" }), el("div", { class: "plan" }, ...(r.questions.length ? r.questions.map(q => el("div", { text: "? " + q })) : [el("div", { class: "muted", text: "None" })])));
+
+  // ---- current design understanding: derived from the working state by the server, every step
+  let und = null;
+  if (r.design) {
+    und = el("div", { class: "card understanding" },
+      el("h3", {}, "Current design understanding", el("span", { text: r.design.part })),
+      el("p", { class: "und-text", text: r.design.text }),
+      el("div", { class: "muted", text: "Derived from the working state above and regenerated every step. It is a view, not memory: the agent never sees it." }));
+  }
 
   // ---- state operation
   const op = el("div", { class: "card" }, el("h3", { text: "State mutation" }));
@@ -824,7 +839,7 @@ function renderInspector() {
   }
 
   $("#i-body").replaceChildren(el("div", { class: "insp-grid" },
-    el("div", { class: "insp-col" }, ev, ws, op), el("div", { class: "insp-col" }, mem, build)));
+    el("div", { class: "insp-col" }, ...[ev, ws, und, op].filter(Boolean)), el("div", { class: "insp-col" }, ...[mem, build].filter(Boolean))));
   // the chart is the heaviest part: redraw it at most ~8 times a second while playing
   const now = performance.now();
   if (!I.playing || now - lastChart > 120 || r.done) { lastChart = now; drawInspChart(chartBox); I.lastChartEl = chartBox; }
