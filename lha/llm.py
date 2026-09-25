@@ -41,7 +41,13 @@ class BedrockLLM:
         self.model_id = model_id or os.environ["LHA_BEDROCK_MODEL_ID"]
         self.name = f"bedrock:{self.model_id}"
         self.temperature = temperature
-        self.client = boto3.client("bedrock-runtime", region_name=region or os.environ.get("AWS_REGION", "us-east-1"))
+        from botocore.config import Config
+
+        # Fail loudly instead of sitting silently: boto3's defaults wait 60 s per attempt and retry quietly.
+        timeout = float(os.environ.get("LHA_LLM_TIMEOUT", "60"))
+        self.client = boto3.client("bedrock-runtime", region_name=region or os.environ.get("AWS_REGION", "us-east-1"),
+                                   config=Config(connect_timeout=10, read_timeout=timeout,
+                                                 retries={"mode": "standard", "max_attempts": 1}))
 
     def complete(self, system: str, prompt: str, max_tokens: int = 2048) -> tuple[str, Usage]:
         # 2048, not 1024: a cad_build action carries a whole build123d script inside the JSON reply,
