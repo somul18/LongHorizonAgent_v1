@@ -72,3 +72,16 @@ def test_crash_and_resume_from_checkpoint(tmp_path):
     assert resumed.state.step == 80
     assert env.score(resumed.run()) == 1.0
     assert json.loads((tmp_path / "r1" / "state.json").read_text())["done"]
+
+
+def test_load_dotenv_skips_blanks_and_keeps_shell_values(tmp_path, monkeypatch):
+    from lha.config import load_dotenv
+
+    (tmp_path / ".env").write_text('# c\nLHA_T_A="x"\nLHA_T_EMPTY=\nexport LHA_T_B=y\nLHA_T_SHELL=file\n')
+    monkeypatch.setenv("LHA_T_SHELL", "shell")
+    for k in ("LHA_T_A", "LHA_T_B", "LHA_T_EMPTY"):
+        monkeypatch.delenv(k, raising=False)
+    load_dotenv(tmp_path / ".env")
+    import os
+    assert (os.environ["LHA_T_A"], os.environ["LHA_T_B"], os.environ["LHA_T_SHELL"]) == ("x", "y", "shell")
+    assert "LHA_T_EMPTY" not in os.environ
