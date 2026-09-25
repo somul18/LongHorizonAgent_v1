@@ -677,8 +677,12 @@ if you need both.
 git switch main
 git pull
 pip install -e ".[dev,aws,cad]"     # only needed when dependencies change; harmless otherwise
-pytest -q
+pytest -q                           # expect: 37 passed
 ```
+
+If `git pull` or `git switch` stops because of local changes, a benchmark run probably rewrote a tracked
+results file. Run `git status` to see which, then `git checkout -- results/` to discard it (or `git stash` to
+keep it) and pull again.
 
 Your `.env` and anything under `results/runs/` or `results/live_*` are git-ignored, so pulling never touches them.
 
