@@ -117,6 +117,14 @@ pre { background: var(--surface-2); border-radius: 8px; padding: 12px; overflow:
 details summary { cursor: pointer; color: var(--text-secondary); font-size: 13px; }
 
 /* ---------------- memory inspector */
+.ops .fork { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; margin: 2px 0 8px; background: var(--surface-2); }
+.fork-change { font-size: 16px; margin: 4px 0 8px; }
+.fork-split { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.ops .fork-split > div { border-radius: 8px; padding: 6px 10px; display: grid; gap: 2px; }
+.fork-split span { font-size: 11px; font-weight: 700; letter-spacing: .06em; }
+.fork-split em { font-style: normal; font-size: 11px; color: var(--text-muted); }
+.fork-active { background: var(--accent-wash); } .fork-active span { color: var(--series-1); }
+.fork-archive { background: rgba(235,104,52,0.12); } .fork-archive span { color: #c25a1c; }
 .insp-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px 20px; margin-bottom: 12px; }
 .insp-head h2 { font-size: 20px; margin: 0; letter-spacing: -0.01em; }
 .insp-head .meta { color: var(--text-secondary); font-size: 13px; }
@@ -615,6 +623,7 @@ class Viewer {
 // ------------------------------------------------------------------ memory inspector
 // Replays runs/<run>/trace.jsonl (written by the stateful agent every step), or follows it live.
 const I = { run: null, recs: [], views: [], idx: 0, playing: false, timer: null, poll: null, total: null, summary: null, done: false };
+const appendAll = (node, ...kids) => node.append(...kids.filter(k => k != null && k !== false));
 const UNIT = { length: "mm", width: "mm", thickness: "mm", hole_diameter: "mm", mass_g: "g" };
 const withUnit = (k, v) => { const u = UNIT[k.split(".").pop()]; const s = typeof v === "string" ? v : JSON.stringify(v); return u ? `${s} ${u}` : s; };
 
@@ -652,7 +661,9 @@ async function pullTrace() {
 function deriveView(pv, prev, r) {
   // Context carried between steps: inbox position, the part in focus, the agent's builds so far.
   const event = prev?.observation || "";
-  const v = { event, prevTool: prev?.tool, inbox: pv?.inbox || [0, null], entity: pv?.entity || null, builds: pv?.builds || {} };
+  const v = { event, prevTool: prev?.tool, inbox: pv?.inbox || [0, null], entity: pv?.entity || null, builds: pv?.builds || {},
+    archivedFacts: (pv?.archivedFacts || 0) + r.archived.filter(a => a[0].endsWith("_fact")).length,
+    recalls: (pv?.recalls || 0) + (r.tool === "recall" ? 1 : 0), prevNaive: prev?.naive_tokens ?? null };
   const m = event.match(/^msg (\d+)\/(\d+):/); if (m) v.inbox = [+m[1], +m[2]];
   const first = (r.ops || []).find(o => o.op === "set_fact")?.key;
   const changed = r.changes.map(c => c[0]);
@@ -688,8 +699,9 @@ function renderInspector() {
   $("#i-badge").textContent = I.done ? "REPLAY" : "LIVE"; $("#i-badge").className = "badge" + (I.done ? "" : " live");
   if (!r) return;
   const [read, total] = v.inbox;
-  $("#i-title").textContent = `Long Horizon Agent: step ${fmt(r.step)}`;
-  $("#i-meta").textContent = [total ? `inbox ${fmt(read)} / ${fmt(total)}` : null, r.model].filter(Boolean).join(" · ");
+  const bench = I.run.includes("design_") ? "DesignDesk" : /^(live_)?(stateful|naive)-n\d+/.test(I.run) ? "IncidentDesk" : "Long Horizon Agent";
+  $("#i-title").textContent = `${bench}: step ${fmt(r.step)}` + (total ? ` · message ${fmt(read)} / ${fmt(total)}` : "");
+  $("#i-meta").textContent = r.model;
   const changed = new Set(r.changes.map(c => c[0]));
   const recalled = new Set((r.ops || []).filter(o => o.op === "set_fact" && o.source === "recall").map(o => o.key));
 
@@ -697,15 +709,15 @@ function renderInspector() {
   const ev = el("div", { class: "card" }, el("h3", { text: "Incoming event" }));
   const text = (v.event.split("\n")[0] || "(start of run)").replace(/^msg \d+\/\d+: /, "");
   const eco = text.match(/\[(ECO-\d+)\] ([\w-]+): (\w+) changed to ([\w.]+)/);
-  if (v.prevTool === "recall") ev.append(el("div", { class: "event-title", style: "color:var(--good-text)", text: "Recall result from the archive" }), el("div", { class: "mono", text: v.event.slice(0, 300) }));
-  else if (v.prevTool === "cad_build") ev.append(el("div", { class: "event-title", text: "Build result" }), el("div", { class: "mono", text: text.slice(0, 220) }));
+  if (v.prevTool === "recall") appendAll(ev, el("div", { class: "event-title", style: "color:var(--good-text)", text: "Recall result from the archive" }), el("div", { class: "mono", text: v.event.slice(0, 300) }));
+  else if (v.prevTool === "cad_build") appendAll(ev, el("div", { class: "event-title", text: "Build result" }), el("div", { class: "mono", text: text.slice(0, 220) }));
   else if (eco) {
     const key = `${eco[2]}.${eco[3]}`, old = r.changes.find(c => c[0] === key)?.[1];
     const line = el("div", { class: "event-change mono" }, `${key}: `, old != null ? `${withUnit(key, old)} → ` : "", el("b", { text: withUnit(key, eco[4]) }));
-    ev.append(el("div", { class: "event-title", text: `${eco[1]} APPROVED` }), line,
+    appendAll(ev, el("div", { class: "event-title", text: `${eco[1]} APPROVED` }), line,
       old == null ? el("div", { class: "muted", text: "not in the working state before: a first value, or the old one was archived" }) : null);
-  } else if (text.startsWith("INBOX EMPTY")) ev.append(el("div", { class: "event-title", text: "Inbox empty: build requests" }), el("div", { class: "mono", text: text.split("->")[1] || text }));
-  else ev.append(el("div", { class: "mono", text }), !r.changes.length && v.prevTool === "next_message" ? el("div", { class: "muted", text: "No state change: noise, a rejected proposal, or already known." }) : null);
+  } else if (text.startsWith("INBOX EMPTY")) appendAll(ev, el("div", { class: "event-title", text: "Inbox empty: build requests" }), el("div", { class: "mono", text: text.split("->")[1] || text }));
+  else appendAll(ev, el("div", { class: "mono", text }), !r.changes.length && v.prevTool === "next_message" ? el("div", { class: "muted", text: "No state change: noise, a rejected proposal, or already known." }) : null);
 
   // ---- working state
   const ws = el("div", { class: "card" }, el("h3", {}, "Working state", el("span", { text: `~${fmt(r.state_tokens)} tokens` })));
@@ -728,10 +740,24 @@ function renderInspector() {
   ws.append(el("div", { class: "sub2", text: "Open questions" }), el("div", { class: "plan" }, ...(r.questions.length ? r.questions.map(q => el("div", { text: "? " + q })) : [el("div", { class: "muted", text: "None" })])));
 
   // ---- state operation
-  const op = el("div", { class: "card" }, el("h3", { text: "State operation" }));
+  const op = el("div", { class: "card" }, el("h3", { text: "State mutation" }));
   const box = el("div", { class: "ops mono" });
+  const oldOf = Object.fromEntries(r.changes.map(c => [c[0], c[1]]));
+  let forks = 0;
   for (const o of (r.ops || []).slice(0, 8)) {
     let t;
+    if (o.op === "set_fact" && oldOf[o.key] != null && forks < 2) {
+      // an overwrite: the new value stays active, the old one goes to the archive
+      forks++;
+      const oldV = withUnit(o.key, oldOf[o.key]), newV = withUnit(o.key, o.value);
+      box.append(el("div", { class: "fork" },
+        el("div", {}, el("b", { text: "set_fact " }), o.key),
+        el("div", { class: "fork-change" }, `${oldV} → `, el("b", { text: newV })),
+        el("div", { class: "fork-split" },
+          el("div", { class: "fork-active" }, el("span", { text: "ACTIVE" }), el("b", { text: newV })),
+          el("div", { class: "fork-archive" }, el("span", { text: "ARCHIVE" }), el("b", { text: oldV }), el("em", { text: "superseded" })))));
+      continue;
+    }
     if (o.op === "set_fact") t = `set_fact("${o.key}", ${JSON.stringify(o.value)}${o.pin ? ", pin=True" : ""})`;
     else if (o.op === "update_task") t = `update_task("${o.id}", ${o.status})`;
     else t = `${o.op}(${Object.entries(o).filter(([k]) => k !== "op").map(([k, x]) => JSON.stringify(x)).join(", ").slice(0, 70)})`;
@@ -739,7 +765,7 @@ function renderInspector() {
   }
   if (!(r.ops || []).length) box.append(el("div", { class: "muted", text: "none" }));
   const sup = r.archived.filter(a => a[0] === "superseded_fact"), evi = r.archived.filter(a => a[0] === "evicted_fact" || a[0] === "dropped_fact");
-  if (sup.length) box.append(el("div", { class: "arch", text: "Superseded: " + sup.map(a => `${a[1]} = ${withUnit(a[1], a[2])} → archive`).join(", ") }));
+  if (sup.length > forks) box.append(el("div", { class: "arch", text: "Superseded: " + sup.map(a => `${a[1]} = ${withUnit(a[1], a[2])} → archive`).join(", ") }));
   if (evi.length) box.append(el("div", { class: "arch", text: "Evicted to archive (over budget): " + evi.map(a => a[1]).join(", ") }));
   if (recalled.size) box.append(el("div", { class: "rest", text: "Restored from archive: " + [...recalled].join(", ") }));
   if (r.op_errors?.length) box.append(el("div", { class: "err", text: "op errors: " + r.op_errors.join("; ") }));
@@ -753,9 +779,11 @@ function renderInspector() {
   // ---- memory
   const red = r.naive_tokens ? 100 * (1 - r.prompt_tokens / r.naive_tokens) : 0;
   const tile = (k, val) => el("div", {}, el("div", { class: "k", text: k }), el("div", { class: "v", text: val }));
-  const mem = el("div", { class: "card" }, el("h3", { text: "Memory" }),
-    el("div", { class: "mem" }, tile("Events processed", fmt(r.step)), tile("Active context", fmtTok(r.prompt_tokens)),
-      tile("Archived items", fmt(r.archive_size)), tile("Naive equivalent (est.)", fmtTok(r.naive_tokens)), tile("Context reduction", red.toFixed(1) + "%")));
+  const growing = v.prevNaive != null && r.naive_tokens > v.prevNaive;
+  const mem = el("div", { class: "card" }, el("h3", { text: "Long-horizon memory" }),
+    el("div", { class: "mem" }, tile("Events processed", fmt(r.step)), tile("Active state (prompt)", fmtTok(r.prompt_tokens)),
+      tile("Naive context (est.)", fmtTok(r.naive_tokens) + (growing ? " ↑" : "")), tile("Context reduction", red.toFixed(1) + "%"),
+      tile("Archived facts", fmt(v.archivedFacts)), tile("Recall operations", fmt(v.recalls))));
   const top = Math.max(r.naive_tokens, r.prompt_tokens, 1);
   const barRow = (name, n, color) => [el("div", { text: name }), el("div", { class: "track" }, (() => { const f = el("div", { class: "fill" }); f.style.width = Math.max(0.6, 100 * n / top) + "%"; f.style.background = css(color); return f; })()), el("div", { class: "n", text: fmtTok(n) })];
   mem.append(el("div", { class: "bars" }, ...barRow("Naive", r.naive_tokens, "--series-2"), ...barRow("LHA", r.prompt_tokens, "--series-1")));
