@@ -140,7 +140,10 @@ class DesignDesk:
                 "edges at each corner. Keep one fact per value, keyed <part>.<attr> (e.g. base-plate.thickness); "
                 "evicted facts come back with recall on that key. When the inbox is empty you get build requests: "
                 "pin the requested parts' facts, then build each requested part "
-                'with cad_build (name = the part, pass its material) and finish {"answer": {"q1": {"part": <name>, '
+                "with cad_build (name = the part, pass its material). Check the result against the spec: bbox_mm "
+                "must equal length, width, thickness and z_through_holes must be 4; if not, fix the script and "
+                "rebuild. When a part is right, set_fact <part>.mass_g to its mass so you do not build it again. "
+                'When every requested part has a mass fact, finish {"answer": {"q1": {"part": <name>, '
                 '"mass_g": <mass from cad_build>}, ...}}.')
 
     def question_text(self) -> str:

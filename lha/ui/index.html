@@ -451,7 +451,8 @@ function renderSide(side, part, g, spec, info, answer) {
       dl.append(el("dt", { text: k }), el("dd", { class: bad ? "bad" : "", text: `${want ?? "–"} mm${got != null ? `  → built ${got}` : ""}` }));
     }
     if (spec) dl.append(el("dt", { text: "hole Ø" }), el("dd", { text: `${spec.hole_diameter} mm` }), el("dt", { text: "material" }), el("dd", { text: spec.material }));
-    if (m) dl.append(el("dt", { text: "holes (cyl. faces)" }), el("dd", { class: m.cyl_faces === 4 ? "" : "bad", text: m.cyl_faces }),
+    const thru = m?.z_through_holes ?? m?.cyl_faces;
+    if (m) dl.append(el("dt", { text: "through-holes" }), el("dd", { class: thru === 4 ? "" : "bad", text: `${thru} of 4${m.cyl_faces !== thru ? ` (${m.cyl_faces} cylindrical faces)` : ""}` }),
       el("dt", { text: "volume" }), el("dd", { text: `${fmt(m.volume_mm3)} mm³` }), el("dt", { text: "valid solid" }), el("dd", {}, status(m.valid, "yes", "no")));
     const a = answer && Object.values(answer).find(x => x && x.part === part);
     if (g) dl.append(el("dt", { text: "mass" }), el("dd", { class: g.mass ? "" : "bad", text: `${a?.mass_g ?? "–"} g reported · ${g.ref_mass_g} g true` }));

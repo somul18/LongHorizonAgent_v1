@@ -61,7 +61,10 @@ def measure(part, density: float | None = None) -> dict:
         "bbox_mm": [round(bb.size.X, 3), round(bb.size.Y, 3), round(bb.size.Z, 3)],
         "volume_mm3": round(vol, 2),
         "faces": len(part.faces()),
-        "cyl_faces": len(part.faces().filter_by(b.GeomType.CYLINDER)),
+        "cyl_faces": len(cyl := part.faces().filter_by(b.GeomType.CYLINDER)),
+        # holes along Z that go all the way through; a blind hole (e.g. a cutter placed at the
+        # wrong height) still counts as a cylindrical face but not here
+        "z_through_holes": sum(1 for f in cyl if abs(f.bounding_box().size.Z - bb.size.Z) < 1e-3),
     }
     if density is not None:
         out["density_g_cm3"] = density

@@ -23,6 +23,16 @@ def test_cad_tools_build_measure_export(tmp_path):
     assert box.call("cad_measure", {"name": "nope"}).startswith("ERROR")
 
 
+def test_blind_holes_are_not_through_holes():
+    from lha.cad import measure
+
+    ws = CadWorkspace()
+    through = ws.build("t", "result = Box(95, 75, 8) - Pos(40, 30, 0) * Cylinder(1.6, 8)")
+    blind = ws.build("b", "result = Box(95, 75, 8) - Pos(40, 30, 4) * Cylinder(1.6, 8)")  # cutter half above the plate
+    assert measure(through)["z_through_holes"] == 1
+    assert measure(blind)["z_through_holes"] == 0 and measure(blind)["cyl_faces"] == 1
+
+
 def test_geometry_match_ignores_translation_but_not_hole_position():
     ws = CadWorkspace()
     ref = ws.build("ref", plate_script(80, 40, 5, 4.3))
