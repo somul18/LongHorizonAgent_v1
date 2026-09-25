@@ -2,6 +2,7 @@
 
     python -m lha.cli run "Track the 5 largest open-weight model releases this month" --run-id research1
     python -m lha.cli run --run-id research1          # resume after a crash / days later
+    python -m lha.cli run "Design a 2U rack blanking panel" --run-id cad1 --cad   # + build123d CAD tools
     python -m lha.cli state research1                 # print the working state
     python -m lha.cli recall research1 "mistral"      # search cold storage
 """
@@ -30,6 +31,11 @@ def cmd_run(a) -> None:
     if not goal:
         raise SystemExit("give a goal (or a --run-id with an existing checkpoint to resume)")
     tools = ToolBox(nimble_tools() if os.environ.get("NIMBLE_CREDENTIALS") else [])
+    if a.cad:
+        from .cad import cad_tools  # needs build123d (pip install -e ".[cad]")
+
+        for t in cad_tools(RUNS / a.run_id / "cad"):
+            tools.add(t)
     agent = StatefulAgent(from_env(), tools, goal, run_dir=RUNS, run_id=a.run_id,
                           sinks=[JsonlSink(RUNS / a.run_id / "steps.jsonl"), *sinks_from_env()],
                           max_steps=a.max_steps, verbose=True,
@@ -56,6 +62,7 @@ def main(argv=None) -> None:
     r.add_argument("--run-id", required=True)
     r.add_argument("--budget", type=int, default=2000)
     r.add_argument("--max-steps", type=int, default=100)
+    r.add_argument("--cad", action="store_true", help="add build123d CAD tools (cad_build, cad_measure, ...)")
     r.set_defaults(fn=cmd_run)
     s = sub.add_parser("state")
     s.add_argument("run_id")

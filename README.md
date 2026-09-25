@@ -75,12 +75,40 @@ agent must report the *current* values, including values last seen at the very s
   real model's accuracy drops as it reads 50k–170k tokens of conflicting history, run
   `--live` (below).
 
+## Results: DesignDesk (CAD) benchmark
+
+`lha/bench/design_desk.py` applies the same idea to CAD, where the agent has to produce an actual part.
+The agent tracks the spec of 8 mounting plates (length, width, thickness, hole diameter, material)
+through an inbox of engineering change orders (ECOs). The inbox also holds reviews, supplier quotes and
+*rejected proposals* that mention values but change nothing. At the end it receives build requests. It
+writes a **build123d** script for each requested part, builds it with `cad_build`, and reports its mass.
+Grading is geometric. The built solid must match a reference solid, meaning the same bounding box and
+an empty symmetric difference up to translation. The reported mass must be within 1%. A single stale
+thickness from 2,000 messages ago produces a wrong part.
+
+`python -m lha.bench.run --env design` (offline, deterministic, runs in about 10 s; working-state budget of 600 tokens):
+
+| messages | agent | score | peak prompt tok | total input tok | cost vs naive |
+|---:|---|---:|---:|---:|---:|
+| 200 | **stateful** | 1.00 | 1,139 | 226,604 | **19.4%** |
+| 200 | naive | 1.00 | 11,359 | 1,168,482 | 100% |
+| 1000 | **stateful** | 1.00 | 1,276 | 1,114,813 | **4.1%** |
+| 1000 | naive | 1.00 | 53,772 | 27,050,815 | 100% |
+| 3000 | **stateful** | 1.00 | 1,301 | 3,328,129 | **1.4%** |
+| 3000 | naive | 1.00 | 161,177 | 241,455,771 | 100% |
+
+The CAD tools (`lha/cad.py`) are ordinary `Tool`s, so any agent can use them: `cad_build`, `cad_measure`,
+`cad_list` and `cad_export` (STEP/STL). Each build is answered with one line of checkable numbers
+(`valid`, `bbox_mm`, `volume_mm3`, `cyl_faces`, `mass_g`). Scripts and exports are written to the run
+directory and never into the prompt. Scripts run with `exec`, so run the agent in a sandbox.
+
 ## Quick start
 
 ```bash
-pip install -e ".[dev,aws]"
-pytest -q                                # 7 tests: ops, compaction, pins, parsing, flat-vs-growing, crash/resume
+pip install -e ".[dev,aws,cad]"
+pytest -q                                # 11 tests: ops, compaction, pins, parsing, flat-vs-growing, crash/resume, CAD
 python -m lha.bench.run                  # offline benchmark -> results/report.md
+python -m lha.bench.run --env design     # CAD benchmark -> results/design_report.md
 
 cp .env.example .env && $EDITOR .env     # then export the vars
 python -m lha.bench.run --live --sizes 50,200 --skip-naive-above 200
@@ -88,6 +116,8 @@ python -m lha.cli run "Track this week's major open-weight model releases: name,
 python -m lha.cli run --run-id rel1      # resume (after Ctrl-C, a crash, or tomorrow)
 python -m lha.cli state rel1             # what the agent currently believes
 python -m lha.cli recall rel1 "license"  # dig into cold storage
+python -m lha.cli run "Design a 60x40 mm Raspberry Pi camera mount, 3 mm PLA, export STEP" --run-id cad1 --cad
+python -m lha.bench.run --env design --live --sizes 50,200 --skip-naive-above 200
 ```
 
 ## Sponsor stack
@@ -112,8 +142,9 @@ lha/archive.py      append-only log + BM25-ish recall
 lha/agent.py        StatefulAgent (checkpoint/resume) and NaiveAgent baseline
 lha/llm.py          Bedrock, OpenAI-compatible (Liquid), Scripted
 lha/tools.py        tool box, recall, Nimble web tools
+lha/cad.py          build123d CAD workspace + tools, geometric grading
 lha/sinks.py        JSONL + Tinybird telemetry
-lha/bench/          IncidentDesk env + benchmark runner
+lha/bench/          IncidentDesk + DesignDesk (CAD) envs, benchmark runner
 tinybird/           datasources + API endpoints
 ```
 
