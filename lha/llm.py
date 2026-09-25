@@ -39,13 +39,21 @@ class BedrockLLM:
         self.temperature = temperature
         self.client = boto3.client("bedrock-runtime", region_name=region or os.environ.get("AWS_REGION", "us-east-1"))
 
-    def complete(self, system: str, prompt: str, max_tokens: int = 1024) -> tuple[str, Usage]:
-        resp = self.client.converse(
-            modelId=self.model_id,
-            system=[{"text": system}],
-            messages=[{"role": "user", "content": [{"text": prompt}]}],
-            inferenceConfig={"maxTokens": max_tokens, "temperature": self.temperature},
-        )
+    def complete(self, system: str, prompt: str, max_tokens: int = 2048) -> tuple[str, Usage]:
+        # 2048, not 1024: a cad_build action carries a whole build123d script inside the JSON reply,
+        # and a truncated reply costs a step (parse error fed back) instead of a few tokens.
+        try:
+            resp = self.client.converse(
+                modelId=self.model_id,
+                system=[{"text": system}],
+                messages=[{"role": "user", "content": [{"text": prompt}]}],
+                inferenceConfig={"maxTokens": max_tokens, "temperature": self.temperature},
+            )
+        except self.client.exceptions.ValidationException as e:
+            if "inference profile" in str(e) and self.model_id.startswith("anthropic."):
+                raise RuntimeError(f"{e}\nUse a cross-region inference profile ID, e.g. "
+                                   f"LHA_BEDROCK_MODEL_ID=us.{self.model_id}") from e
+            raise
         text = "".join(c.get("text", "") for c in resp["output"]["message"]["content"])
         u = resp.get("usage", {})
         return text, Usage(u.get("inputTokens", 0), u.get("outputTokens", 0))
