@@ -91,8 +91,9 @@ def cmd_models(a) -> None:
     if ok:
         print(f"\nexport AWS_REGION={a.region}\nexport LHA_BEDROCK_MODEL_ID={ok[0]}")
     else:
+        other = "us-west-2" if a.region == "us-east-1" else "us-east-1"
         print(f"\nNo Claude model is usable in {a.region}. Request access in the Bedrock console "
-              "(Model access / Model catalog) or try --region us-west-2.")
+              f"(Model access / Model catalog) or try --region {other}.")
 
 
 def main(argv=None) -> None:
