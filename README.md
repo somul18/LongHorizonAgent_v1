@@ -1,9 +1,19 @@
 # LongHorizonAgent (LHA): state, not history
 
+**History grows. State doesn't have to.**
+
 **An agent architecture for runs that last thousands of steps, and a CAD agent built on it.** The
 agent follows a mechanical design through thousands of engineering change orders, then writes
 **build123d** (OpenCascade) scripts that produce real 3D parts. Each part is graded geometrically
-against the true spec and can be inspected in a 3D dashboard.
+against the true spec. A [Memory State Inspector](#watch-it-work-the-memory-state-inspector) shows, step
+by step, how the agent keeps a ~1.3k-token working state while a naive transcript grows past 160k tokens,
+and a 3D dashboard shows the parts it built.
+
+```bash
+pip install -e ".[dev,aws,cad]"
+python -m lha.bench.run --env design --sizes 1000 --inspect   # watch it offline, no API key needed
+python -m lha.ui                                              # dashboard: inspector, benchmarks, 3D parts
+```
 
 ![A plate the agent designed, shown in the dashboard with its spec, grade and build123d script](docs/images/cad-part-pass.png)
 
@@ -488,7 +498,18 @@ python -m lha.ui                         # opens http://127.0.0.1:8765 and reads
 python -m lha.ui --results other/dir --port 9000 --no-browser
 ```
 
-A local web page (stdlib HTTP server, bound to localhost, no extra installs). It has two tabs.
+A local web page (stdlib HTTP server, bound to localhost, no extra installs). It has three tabs.
+
+**Memory inspector** (opens first)
+- Pick any traced run: offline, live, or still running (marked LIVE, and it follows the run as it goes).
+- Play/pause, a speed selector and a step slider move through the run one step at a time.
+- Each step shows the incoming event, the working state (facts for the part in focus marked ← UPDATED or
+  ← RECALLED, the plan, open questions), the state operation (what was superseded, evicted or restored),
+  and the memory panel: events, active context, archive size, naive estimate, context reduction, the two
+  bars, and a chart of prompt size at every step so far.
+- In the build phase: the pipeline from historical events to working state, build123d, `.step` file and
+  validator, with the agent's own checks per part and the final verdict, plus a button to open the parts in 3D.
+- See [Watch it work](#watch-it-work-the-memory-state-inspector) for the terminal version and what each part means.
 
 **Benchmarks**
 - Pick any results file (offline `results.json` / `design_results.json`, or live `live_*`), a message count
@@ -507,8 +528,9 @@ A local web page (stdlib HTTP server, bound to localhost, no extra installs). It
   in red), hole count, volume, reported against true mass, the **build123d script the agent wrote**, and
   the agent's final working state.
 
-Runs save what the dashboard needs: `runs/<run_id>/summary.json` (answer, per-part grades, specs) and
-every built part as an exact `.brep` next to its `.py` script. Click **Refresh** after a run finishes.
+Runs save what the dashboard needs: `runs/<run_id>/trace.jsonl` (one inspector record per step),
+`summary.json` (answer, per-part grades, specs) and every built part as an exact `.brep` and a `.step`
+next to its `.py` script. Click **Refresh** to pick up new runs.
 three.js loads from jsDelivr, so the browser needs internet access.
 
 ---
@@ -534,6 +556,17 @@ pytest -q
 If pip warns that `aiobotocore requires botocore<…`, that comes from another package in your environment
 (often s3fs). LHA does not use it. Use a fresh virtualenv (`python -m venv .venv && source .venv/bin/activate`)
 if you need both.
+
+### Updating an existing clone
+
+```bash
+git switch main
+git pull
+pip install -e ".[dev,aws,cad]"     # only needed when dependencies change; harmless otherwise
+pytest -q
+```
+
+Your `.env` and anything under `results/runs/` or `results/live_*` are git-ignored, so pulling never touches them.
 
 ---
 
@@ -783,8 +816,11 @@ CAD tests are skipped automatically if build123d isn't installed.
 **Known limitations**
 - **Offline accuracy is not model accuracy.** Scripted policies read perfectly, so offline scores tie at
   1.00. Only `--live` measures how models degrade.
-- **The live evidence so far is thin:** one run at 50 messages, where nothing was evicted. It needs
-  longer horizons (200 to 3,000) and several seeds before drawing conclusions.
+- **The live evidence so far is thin:** two runs at 50 messages, where nothing was evicted, and both before
+  the latest CAD-check fix. It needs longer horizons (200 to 3,000) and several seeds before drawing conclusions.
+- **"Naive equivalent" in the inspector is an estimate:** the stateful agent's own replies and tool results
+  replayed as a transcript. The benchmark's naive agent is the measured baseline; the two land close
+  (about 53k tokens at 1,000 messages).
 - **Token counts are estimates** (~4 characters per token) for budgets and offline runs. Live runs
   report Bedrock's real counts.
 - **Recall is lexical.** It works well for keys, ids and names, and less well for paraphrased questions.
@@ -792,6 +828,7 @@ CAD tests are skipped automatically if build123d isn't installed.
   fillets, assemblies) are a natural extension.
 
 **Roadmap**
+- A live run at 200+ messages with `--inspect`: the first where a real model evicts and recalls.
 - Live sweeps across horizons and seeds (`--live --sizes 200,1000 --seeds 0,1,2`), plotted in the dashboard.
 - Embedding recall (Bedrock Titan or Cohere) alongside lexical recall.
 - Learned eviction: let the Liquid model score fact value instead of recency × confidence.
