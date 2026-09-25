@@ -72,3 +72,14 @@ def test_crash_and_resume_from_checkpoint(tmp_path):
     assert resumed.state.step == 80
     assert env.score(resumed.run()) == 1.0
     assert json.loads((tmp_path / "r1" / "state.json").read_text())["done"]
+
+
+def test_recall_matches_keys_however_the_model_spelled_them(tmp_path):
+    from lha.tools import recall_tool
+
+    arc = Archive(None, "r")
+    arc.put(3, "evicted_fact", "base-plate_width", {"key": "base-plate_width", "value": "30", "source": "ECO-5242"})
+    arc.put(4, "observation", "recall", {"args": {"query": "base-plate width"}, "result": "recall: no matches"})
+    out = recall_tool(arc).fn({"query": "base-plate width"})
+    assert out == '[step 3] evicted_fact base-plate_width = "30" (src: ECO-5242)'  # not its own past query
+    assert "base-plate_width" in recall_tool(arc).fn({"query": "base-plate.width"})

@@ -1,0 +1,560 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LHA Bench</title>
+<style>
+:root {
+  color-scheme: light;
+  --page: #f9f9f7; --surface-1: #fcfcfb; --surface-2: #f3f2ee;
+  --text-primary: #0b0b0b; --text-secondary: #52514e; --text-muted: #898781;
+  --grid: #e1e0d9; --axis: #c3c2b7; --border: rgba(11,11,11,0.10);
+  --series-1: #2a78d6; --series-2: #eb6834;
+  --good: #0ca30c; --good-text: #006300; --critical: #d03b3b;
+  --accent-wash: rgba(42,120,214,0.10);
+  --viewer-bg: #f3f2ee; --ref-line: #52514e;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface-1: #1a1a19; --surface-2: #232321;
+    --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #898781;
+    --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
+    --series-1: #3987e5; --series-2: #d95926;
+    --good: #0ca30c; --good-text: #0ca30c; --critical: #e66767;
+    --accent-wash: rgba(57,135,229,0.16);
+    --viewer-bg: #121211; --ref-line: #c3c2b7;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0d0d0d; --surface-1: #1a1a19; --surface-2: #232321;
+  --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #898781;
+  --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
+  --series-1: #3987e5; --series-2: #d95926;
+  --good: #0ca30c; --good-text: #0ca30c; --critical: #e66767;
+  --accent-wash: rgba(57,135,229,0.16);
+  --viewer-bg: #121211; --ref-line: #c3c2b7;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--page); color: var(--text-primary);
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+header { display: flex; align-items: center; gap: 16px; padding: 12px 24px;
+  border-bottom: 1px solid var(--border); background: var(--surface-1); position: sticky; top: 0; z-index: 5; }
+header h1 { font-size: 16px; margin: 0; font-weight: 650; letter-spacing: -0.01em; }
+nav { display: flex; gap: 4px; }
+nav button, .btn { font: inherit; color: var(--text-secondary); background: none; border: 1px solid transparent;
+  border-radius: 8px; padding: 6px 12px; cursor: pointer; }
+nav button[aria-selected="true"] { color: var(--text-primary); background: var(--accent-wash); }
+.btn { border-color: var(--border); background: var(--surface-1); }
+.btn:hover, nav button:hover { color: var(--text-primary); }
+.spacer { flex: 1; }
+main { padding: 20px 24px 48px; max-width: 1400px; margin: 0 auto; }
+.filters { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; margin-bottom: 16px; }
+.filters label { display: grid; gap: 4px; font-size: 12px; color: var(--text-secondary); }
+select { font: inherit; color: var(--text-primary); background: var(--surface-1); border: 1px solid var(--border);
+  border-radius: 8px; padding: 6px 10px; min-width: 160px; }
+.card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
+.card h2 { font-size: 14px; margin: 0 0 2px; font-weight: 600; }
+.card .sub { color: var(--text-secondary); font-size: 12px; margin: 0 0 12px; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.tile .label { color: var(--text-secondary); font-size: 12px; }
+.tile .value { font-size: 28px; font-weight: 650; letter-spacing: -0.02em; margin-top: 2px; }
+.tile .note { color: var(--text-muted); font-size: 12px; }
+.grid2 { display: grid; grid-template-columns: 2fr 1fr; gap: 12px; margin-bottom: 16px; }
+@media (max-width: 900px) { .grid2 { grid-template-columns: 1fr; } }
+.chart { position: relative; }
+.chart svg { display: block; width: 100%; overflow: visible; }
+.legend { display: flex; gap: 16px; font-size: 12px; color: var(--text-secondary); margin-bottom: 8px; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend i { width: 14px; height: 2px; border-radius: 1px; display: inline-block; }
+.tooltip { position: absolute; pointer-events: none; background: var(--surface-1); border: 1px solid var(--border);
+  border-radius: 8px; padding: 8px 10px; font-size: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.12); display: none;
+  min-width: 140px; z-index: 3; }
+.tooltip .t { color: var(--text-secondary); margin-bottom: 4px; }
+.tooltip .r { display: flex; align-items: center; gap: 8px; }
+.tooltip .r b { font-variant-numeric: tabular-nums; }
+.tooltip .r i { width: 10px; height: 2px; display: inline-block; }
+.tooltip .r span { color: var(--text-secondary); }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { text-align: left; font-weight: 600; color: var(--text-secondary); font-size: 12px; }
+th, td { padding: 7px 10px; border-bottom: 1px solid var(--grid); }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+tr.clickable { cursor: pointer; } tr.clickable:hover td { background: var(--accent-wash); }
+.status { display: inline-flex; align-items: center; gap: 4px; font-weight: 600; font-size: 12px; }
+.status.good { color: var(--good-text); } .status.bad { color: var(--critical); }
+.status svg { width: 14px; height: 14px; }
+.parts-layout { display: grid; grid-template-columns: 300px 1fr; gap: 12px; }
+@media (max-width: 900px) { .parts-layout { grid-template-columns: 1fr; } }
+.runlist { max-height: 76vh; overflow: auto; padding: 8px; }
+.runitem { padding: 8px 10px; border-radius: 8px; cursor: pointer; display: grid; gap: 2px; }
+.runitem:hover { background: var(--surface-2); }
+.runitem[aria-selected="true"] { background: var(--accent-wash); }
+.runitem .id { font-weight: 600; font-size: 13px; word-break: break-all; }
+.runitem .meta { color: var(--text-secondary); font-size: 12px; display: flex; gap: 8px; align-items: center; }
+.partbar { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+.partbar button { font: inherit; font-size: 13px; border: 1px solid var(--border); background: var(--surface-1);
+  color: var(--text-primary); border-radius: 999px; padding: 4px 12px; cursor: pointer; display: inline-flex; gap: 6px; align-items: center; }
+.partbar button[aria-selected="true"] { border-color: var(--series-1); background: var(--accent-wash); }
+.viewer-wrap { display: grid; grid-template-columns: 1fr 320px; gap: 12px; }
+@media (max-width: 1100px) { .viewer-wrap { grid-template-columns: 1fr; } }
+#viewer { position: relative; height: 480px; border-radius: 10px; overflow: hidden; background: var(--viewer-bg); }
+#viewer canvas { display: block; }
+.viewer-tools { position: absolute; top: 10px; left: 10px; display: flex; gap: 6px; flex-wrap: wrap; z-index: 2; }
+.viewer-tools label { background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px;
+  padding: 4px 8px; font-size: 12px; display: inline-flex; gap: 6px; align-items: center; color: var(--text-secondary); }
+.viewer-msg { position: absolute; inset: 0; display: grid; place-items: center; color: var(--text-secondary);
+  text-align: center; padding: 24px; }
+dl.kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0; font-size: 13px; }
+dl.kv dt { color: var(--text-secondary); } dl.kv dd { margin: 0; font-variant-numeric: tabular-nums; }
+dl.kv dd.bad { color: var(--critical); font-weight: 600; }
+pre { background: var(--surface-2); border-radius: 8px; padding: 12px; overflow: auto; font-size: 12px; margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; max-height: 260px; }
+.section-title { font-size: 12px; font-weight: 600; color: var(--text-secondary); margin: 14px 0 6px; text-transform: uppercase; letter-spacing: 0.04em; }
+.empty { color: var(--text-secondary); padding: 24px; text-align: center; }
+.err { color: var(--critical); }
+details summary { cursor: pointer; color: var(--text-secondary); font-size: 13px; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<header>
+  <h1>LHA Bench</h1>
+  <nav role="tablist">
+    <button role="tab" data-tab="bench" aria-selected="true">Benchmarks</button>
+    <button role="tab" data-tab="parts" aria-selected="false">CAD parts</button>
+  </nav>
+  <div class="spacer"></div>
+  <button class="btn" id="refresh" title="Reload results from disk">Refresh</button>
+  <button class="btn" id="theme" title="Theme">Theme: auto</button>
+</header>
+
+<main>
+  <section id="tab-bench">
+    <div class="filters">
+      <label>Results file <select id="f-file"></select></label>
+      <label>Messages <select id="f-size"></select></label>
+      <label>Seed <select id="f-seed"></select></label>
+    </div>
+    <div class="tiles" id="tiles"></div>
+    <div class="grid2">
+      <div class="card">
+        <h2>Prompt size per step</h2>
+        <p class="sub">Input tokens the model reads at every step of one run. The stateful prompt stays flat; the naive transcript grows.</p>
+        <div class="legend" id="legend-curve"></div>
+        <div class="chart" id="chart-curve"></div>
+      </div>
+      <div class="card">
+        <h2>Peak prompt by inbox length</h2>
+        <p class="sub">Largest single prompt in each run, across all sizes in this file.</p>
+        <div class="legend" id="legend-peak"></div>
+        <div class="chart" id="chart-peak"></div>
+      </div>
+    </div>
+    <div class="card">
+      <h2>All runs in this file</h2>
+      <p class="sub">DesignDesk rows open the built parts.</p>
+      <div id="table"></div>
+    </div>
+  </section>
+
+  <section id="tab-parts" hidden>
+    <div class="parts-layout">
+      <div class="card runlist" id="runlist"></div>
+      <div class="card" id="rundetail"><div class="empty">Pick a run on the left.</div></div>
+    </div>
+  </section>
+</main>
+
+<script type="module">
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+// ------------------------------------------------------------------ utils
+const $ = (s, el = document) => el.querySelector(s);
+const el = (tag, attrs = {}, ...kids) => {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "class") e.className = v; else if (k === "text") e.textContent = v;
+    else if (k.startsWith("on")) e.addEventListener(k.slice(2), v); else e.setAttribute(k, v);
+  }
+  for (const k of kids) if (k != null) e.append(k.nodeType ? k : document.createTextNode(String(k)));
+  return e;
+};
+const SVG = "http://www.w3.org/2000/svg";
+const s = (tag, attrs = {}) => { const e = document.createElementNS(SVG, tag); for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v); return e; };
+const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const fmt = (n) => n == null ? "–" : Number(n).toLocaleString();
+const fmtTok = (n) => n >= 1e6 ? (n / 1e6).toFixed(n >= 1e7 ? 0 : 1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(n >= 1e4 ? 0 : 1) + "k" : String(n);
+async function api(path) {
+  const r = await fetch(path);
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+const ICON_OK = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 8.5l3 3 7-7"/></svg>';
+const ICON_BAD = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4l8 8M12 4l-8 8"/></svg>';
+function status(ok, yes = "pass", no = "fail") {
+  const sp = el("span", { class: "status " + (ok ? "good" : "bad") });
+  sp.innerHTML = ok ? ICON_OK : ICON_BAD;  // static icons only
+  sp.append(document.createTextNode(ok ? yes : no));
+  return sp;
+}
+const SERIES = { stateful: "--series-1", naive: "--series-2" };
+
+// ------------------------------------------------------------------ theme
+const themes = ["auto", "light", "dark"];
+let theme = (() => { try { return localStorage.getItem("lha-theme") || "auto"; } catch { return "auto"; } })();
+function applyTheme() {
+  if (theme === "auto") document.documentElement.removeAttribute("data-theme");
+  else document.documentElement.setAttribute("data-theme", theme);
+  $("#theme").textContent = "Theme: " + theme;
+  try { localStorage.setItem("lha-theme", theme); } catch {}
+  renderBench(); viewer?.restyle();
+}
+$("#theme").onclick = () => { theme = themes[(themes.indexOf(theme) + 1) % 3]; applyTheme(); };
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { renderBench(); viewer?.restyle(); });
+
+// ------------------------------------------------------------------ tabs
+document.querySelectorAll("nav button").forEach(b => b.onclick = () => showTab(b.dataset.tab));
+function showTab(t) {
+  document.querySelectorAll("nav button").forEach(b => b.setAttribute("aria-selected", String(b.dataset.tab === t)));
+  $("#tab-bench").hidden = t !== "bench"; $("#tab-parts").hidden = t !== "parts";
+  if (t === "parts") viewer?.resize();
+}
+
+// ------------------------------------------------------------------ benchmarks
+let files = [], state = { file: null, size: null, seed: null };
+async function loadResults() {
+  try { files = await api("/api/results"); } catch (e) { files = []; }
+  const sel = $("#f-file"); sel.replaceChildren();
+  if (!files.length) {
+    sel.append(el("option", { text: "no results yet" }));
+    $("#tiles").replaceChildren(el("div", { class: "empty", text: "No results/*.json yet. Run: python -m lha.bench.run --env design" }));
+    return;
+  }
+  files.sort((a, b) => b.mtime - a.mtime);
+  for (const f of files) sel.append(el("option", { value: f.file, text: `${f.file}${f.live ? " (live)" : ""}` }));
+  if (!files.find(f => f.file === state.file)) state.file = files[0].file;
+  sel.value = state.file;
+  syncFilters(); renderBench();
+}
+function curFile() { return files.find(f => f.file === state.file); }
+function syncFilters() {
+  const f = curFile(); if (!f) return;
+  const sizes = [...new Set(f.rows.map(r => r.messages))].sort((a, b) => a - b);
+  const seeds = [...new Set(f.rows.map(r => r.seed))].sort((a, b) => a - b);
+  if (!sizes.includes(state.size)) state.size = sizes[sizes.length - 1];
+  if (!seeds.includes(state.seed)) state.seed = seeds[0];
+  const fill = (sel, vals, cur) => { sel.replaceChildren(...vals.map(v => el("option", { value: v, text: v }))); sel.value = cur; };
+  fill($("#f-size"), sizes, state.size); fill($("#f-seed"), seeds, state.seed);
+}
+$("#f-file").onchange = e => { state.file = e.target.value; syncFilters(); renderBench(); };
+$("#f-size").onchange = e => { state.size = +e.target.value; renderBench(); };
+$("#f-seed").onchange = e => { state.seed = +e.target.value; renderBench(); };
+
+function renderBench() {
+  const f = curFile(); if (!f) return;
+  const rows = f.rows.filter(r => r.messages === state.size && r.seed === state.seed);
+  const st = rows.find(r => r.agent === "stateful"), nv = rows.find(r => r.agent === "naive");
+  // tiles
+  const tile = (label, value, note) => el("div", { class: "card tile" }, el("div", { class: "label", text: label }),
+    el("div", { class: "value", text: value }), note ? el("div", { class: "note", text: note }) : null);
+  const tiles = [
+    tile("Stateful score", st ? st.score.toFixed(2) : "–", st ? `${st.steps} steps` : "not run"),
+    tile("Naive score", nv ? nv.score.toFixed(2) : "–", nv ? `${nv.steps} steps` : "not run"),
+    tile("Peak prompt", st ? fmtTok(st.peak_prompt_tokens) : "–", nv ? `naive: ${fmtTok(nv.peak_prompt_tokens)}` : ""),
+    tile("Input tokens vs naive", st && nv ? (100 * st.total_input_tokens / nv.total_input_tokens).toFixed(1) + "%" : "–",
+      st ? `${fmtTok(st.total_input_tokens)} stateful${nv ? " / " + fmtTok(nv.total_input_tokens) + " naive" : ""}` : ""),
+  ];
+  $("#tiles").replaceChildren(...tiles);
+  // curve chart
+  const series = rows.filter(r => r.curve?.length).map(r => ({ name: r.agent, color: css(SERIES[r.agent] || "--series-1"), ys: r.curve }));
+  legend($("#legend-curve"), series);
+  lineChart($("#chart-curve"), series, { xLabel: "step", height: 300, xs: null });
+  // peak chart across sizes
+  const sizes = [...new Set(f.rows.filter(r => r.seed === state.seed).map(r => r.messages))].sort((a, b) => a - b);
+  const peak = ["stateful", "naive"].map(a => ({
+    name: a, color: css(SERIES[a]),
+    ys: sizes.map(n => f.rows.find(r => r.agent === a && r.messages === n && r.seed === state.seed)?.peak_prompt_tokens ?? null),
+  })).filter(sr => sr.ys.some(v => v != null));
+  legend($("#legend-peak"), peak);
+  lineChart($("#chart-peak"), peak, { xLabel: "messages", height: 300, xs: sizes, markers: true });
+  renderTable(f);
+}
+
+function legend(root, series) {
+  root.replaceChildren(...series.map(sr => { const i = el("i"); i.style.background = sr.color; return el("span", {}, i, sr.name); }));
+}
+
+function niceMax(v) { const p = 10 ** Math.floor(Math.log10(v || 1)); for (const m of [1, 2, 2.5, 5, 10]) if (m * p >= v) return m * p; return 10 * p; }
+
+function lineChart(root, series, { xLabel, height, xs, markers }) {
+  root.replaceChildren();
+  if (!series.length) { root.append(el("div", { class: "empty", text: "No per-step data in this file." })); return; }
+  const W = Math.max(280, root.clientWidth || 600), H = height, m = { l: 52, r: 64, t: 8, b: 44 };
+  const n = xs ? xs.length : Math.max(...series.map(sr => sr.ys.length));
+  const yMax = niceMax(Math.max(...series.flatMap(sr => sr.ys.filter(v => v != null))));
+  const X = i => m.l + (xs ? (n === 1 ? 0.5 : i / (n - 1)) : (n <= 1 ? 0 : i / (n - 1))) * (W - m.l - m.r);
+  const Y = v => H - m.b - (v / yMax) * (H - m.t - m.b);
+  const svg = s("svg", { viewBox: `0 0 ${W} ${H}`, height: H, role: "img", "aria-label": `${series.map(x => x.name).join(" vs ")} by ${xLabel}` });
+  // grid + y ticks
+  for (let k = 0; k <= 4; k++) {
+    const v = yMax * k / 4, y = Y(v);
+    svg.append(s("line", { x1: m.l, x2: W - m.r, y1: y, y2: y, stroke: k ? css("--grid") : css("--axis"), "stroke-width": 1 }));
+    const t = s("text", { x: m.l - 8, y: y + 4, "text-anchor": "end", fill: css("--text-muted"), "font-size": 11 }); t.textContent = fmtTok(v); svg.append(t);
+  }
+  // x ticks
+  const ticks = xs ? xs.map((v, i) => [i, v]) : [0, .25, .5, .75, 1].map(f => [Math.round(f * (n - 1)), Math.round(f * (n - 1)) + 1]);
+  for (const [i, lab] of ticks) {
+    const t = s("text", { x: X(i), y: H - m.b + 16, "text-anchor": "middle", fill: css("--text-muted"), "font-size": 11 }); t.textContent = fmt(lab); svg.append(t);
+  }
+  const xl = s("text", { x: m.l + (W - m.l - m.r) / 2, y: H - 4, "text-anchor": "middle", fill: css("--text-secondary"), "font-size": 11 }); xl.textContent = xLabel; svg.append(xl);
+  // lines (2px), end labels
+  for (const sr of series) {
+    const pts = sr.ys.map((v, i) => v == null ? null : [X(i), Y(v)]).filter(Boolean);
+    const step = Math.max(1, Math.floor(pts.length / 1200));  // keep long curves light
+    const d = pts.filter((_, i) => i % step === 0 || i === pts.length - 1).map((p, i) => (i ? "L" : "M") + p[0].toFixed(1) + " " + p[1].toFixed(1)).join("");
+    svg.append(s("path", { d, fill: "none", stroke: sr.color, "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }));
+    if (markers) for (const p of pts) svg.append(s("circle", { cx: p[0], cy: p[1], r: 4, fill: sr.color, stroke: css("--surface-1"), "stroke-width": 2 }));
+    const last = pts[pts.length - 1];
+    if (last) { const t = s("text", { x: last[0] + 8, y: last[1] + 4, fill: css("--text-secondary"), "font-size": 11 }); t.textContent = sr.name; svg.append(t); }
+  }
+  // crosshair + tooltip
+  const cross = s("line", { y1: m.t, y2: H - m.b, stroke: css("--axis"), "stroke-width": 1, visibility: "hidden" });
+  const dots = series.map(sr => { const c = s("circle", { r: 4, fill: sr.color, stroke: css("--surface-1"), "stroke-width": 2, visibility: "hidden" }); return c; });
+  svg.append(cross, ...dots);
+  const hit = s("rect", { x: m.l, y: m.t, width: W - m.l - m.r, height: H - m.t - m.b, fill: "transparent" });
+  svg.append(hit);
+  const tip = el("div", { class: "tooltip" });
+  root.append(svg, tip);
+  const hide = () => { cross.setAttribute("visibility", "hidden"); dots.forEach(d => d.setAttribute("visibility", "hidden")); tip.style.display = "none"; };
+  hit.addEventListener("pointerleave", hide);
+  hit.addEventListener("pointermove", ev => {
+    const r = svg.getBoundingClientRect(), px = (ev.clientX - r.left) * (W / r.width);
+    const i = Math.max(0, Math.min(n - 1, Math.round(((px - m.l) / (W - m.l - m.r)) * (n - 1))));
+    cross.setAttribute("x1", X(i)); cross.setAttribute("x2", X(i)); cross.setAttribute("visibility", "visible");
+    tip.replaceChildren(el("div", { class: "t", text: `${xLabel} ${fmt(xs ? xs[i] : i + 1)}` }));
+    series.forEach((sr, k) => {
+      const v = sr.ys[i];
+      if (v == null) { dots[k].setAttribute("visibility", "hidden"); return; }
+      dots[k].setAttribute("cx", X(i)); dots[k].setAttribute("cy", Y(v)); dots[k].setAttribute("visibility", "visible");
+      const key = el("i"); key.style.background = sr.color;
+      tip.append(el("div", { class: "r" }, key, el("b", { text: fmt(v) }), el("span", { text: sr.name + " tok" })));
+    });
+    tip.style.display = "block";
+    const left = (X(i) / W) * r.width;
+    tip.style.left = Math.min(left + 12, r.width - tip.offsetWidth - 4) + "px";
+    tip.style.top = "8px";
+  });
+}
+
+function renderTable(f) {
+  const t = el("table");
+  const head = ["messages", "seed", "agent", "score", "steps", "peak prompt", "total input", "parse errors"];
+  t.append(el("thead", {}, el("tr", {}, ...head.map((h, i) => el("th", { class: i === 1 || i === 2 ? "" : "num", text: h })))));
+  const tb = el("tbody");
+  const sorted = [...f.rows].sort((a, b) => a.messages - b.messages || a.seed - b.seed || a.agent.localeCompare(b.agent));
+  for (const r of sorted) {
+    const runId = `${f.live ? "live_" : ""}${f.env === "design" ? "design_" : ""}${r.agent}-n${r.messages}-s${r.seed}`;
+    const tr = el("tr", f.env === "design" ? { class: "clickable", title: "Open built parts", onclick: () => { showTab("parts"); selectRun(runId); } } : {},
+      el("td", { class: "num", text: fmt(r.messages) }), el("td", { text: r.seed }), el("td", { text: r.agent }),
+      el("td", { class: "num" }, status(r.score >= 0.999, r.score.toFixed(2), r.score.toFixed(2))),
+      el("td", { class: "num", text: fmt(r.steps) }), el("td", { class: "num", text: fmt(r.peak_prompt_tokens) }),
+      el("td", { class: "num", text: fmt(r.total_input_tokens) }), el("td", { class: "num", text: fmt(r.parse_errors) }));
+    tb.append(tr);
+  }
+  t.append(tb);
+  $("#table").replaceChildren(t);
+}
+
+// ------------------------------------------------------------------ runs + parts
+let runs = [], curRun = null, curPart = null;
+async function loadRuns() {
+  try { runs = await api("/api/runs"); } catch { runs = []; }
+  runs.sort((a, b) => b.mtime - a.mtime);
+  const list = $("#runlist"); list.replaceChildren();
+  const design = runs.filter(r => r.parts.length || r.env === "design");
+  if (!design.length) { list.append(el("div", { class: "empty", text: "No DesignDesk runs yet." })); return; }
+  for (const r of design) {
+    const item = el("div", { class: "runitem", role: "button", tabindex: 0, "aria-selected": String(r.run_id === curRun), onclick: () => selectRun(r.run_id) },
+      el("div", { class: "id", text: r.run_id }),
+      el("div", { class: "meta" }, r.score != null ? status(r.score >= 0.999, r.score.toFixed(2), r.score.toFixed(2)) : el("span", { text: "no summary" }),
+        el("span", { text: `${r.parts.length} part${r.parts.length === 1 ? "" : "s"}` }), el("span", { text: r.live ? "live" : "offline" })));
+    item.dataset.id = r.run_id;
+    item.onkeydown = e => { if (e.key === "Enter") selectRun(r.run_id); };
+    list.append(item);
+  }
+}
+
+async function selectRun(id) {
+  curRun = id;
+  document.querySelectorAll(".runitem").forEach(n => n.setAttribute("aria-selected", String(n.dataset.id === id)));
+  const box = $("#rundetail");
+  box.replaceChildren(el("div", { class: "empty", text: "Loading…" }));
+  let d;
+  try { d = await api("/api/run?id=" + encodeURIComponent(id)); }
+  catch (e) { box.replaceChildren(el("div", { class: "empty err", text: e.message })); return; }
+  const sm = d.summary || {}, grade = sm.grade || {}, spec = sm.spec || {};
+  const requested = Object.values(grade).map(g => g.part);
+  const names = [...new Set([...requested, ...Object.keys(d.parts)])];
+  box.replaceChildren(
+    el("h2", { text: id }),
+    el("p", { class: "sub", text: [sm.model, sm.messages != null ? `${sm.messages} messages` : null, sm.score != null ? `score ${sm.score.toFixed(2)}` : null, sm.budget ? `budget ${sm.budget} tok` : null].filter(Boolean).join(" · ") }),
+  );
+  if (!names.length) { box.append(el("div", { class: "empty", text: "This run built no parts." })); return; }
+  const bar = el("div", { class: "partbar" });
+  for (const p of names) {
+    const g = Object.values(grade).find(x => x.part === p);
+    const b = el("button", { "aria-selected": "false", onclick: () => showPart(p) }, p);
+    if (g) b.append(status(g.geometry && g.mass, "", ""));
+    b.dataset.part = p; bar.append(b);
+  }
+  const wrap = el("div", { class: "viewer-wrap" });
+  const vbox = el("div", { id: "viewer" });
+  const side = el("div", { id: "partside" });
+  wrap.append(vbox, side);
+  box.append(bar, wrap, el("div", { id: "factbox" }));
+  viewer = new Viewer(vbox);
+  renderFacts(d.facts);
+  const showPart = async (p) => {
+    curPart = p;
+    bar.querySelectorAll("button").forEach(b => b.setAttribute("aria-selected", String(b.dataset.part === p)));
+    const g = Object.values(grade).find(x => x.part === p), info = d.parts[p] || {};
+    renderSide(side, p, g, spec[p], info, sm.answer);
+    await viewer.load(id, p, { agent: !!info.has_mesh, ref: !!spec[p], mismatch: g ? !g.geometry : false });
+  };
+  showPart(names[0]);
+}
+
+function renderSide(side, part, g, spec, info, answer) {
+  side.replaceChildren();
+  if (g) {
+    side.append(el("div", { class: "section-title", text: "Grade" }),
+      el("dl", { class: "kv" }, el("dt", { text: "geometry" }), el("dd", {}, status(g.geometry)),
+        el("dt", { text: "mass" }), el("dd", {}, status(g.mass))));
+  } else side.append(el("p", { class: "sub", text: "Not one of the requested parts." }));
+  const m = info.measure;
+  if (spec || m) {
+    side.append(el("div", { class: "section-title", text: "Spec vs built" }));
+    const dl = el("dl", { class: "kv" });
+    const bb = m?.bbox_mm || [];
+    const rows = [["length", spec?.length, bb[0]], ["width", spec?.width, bb[1]], ["thickness", spec?.thickness, bb[2]]];
+    for (const [k, want, got] of rows) {
+      const bad = want != null && got != null && Math.abs(+want - got) > 0.01;
+      dl.append(el("dt", { text: k }), el("dd", { class: bad ? "bad" : "", text: `${want ?? "–"} mm${got != null ? `  → built ${got}` : ""}` }));
+    }
+    if (spec) dl.append(el("dt", { text: "hole Ø" }), el("dd", { text: `${spec.hole_diameter} mm` }), el("dt", { text: "material" }), el("dd", { text: spec.material }));
+    const thru = m?.z_through_holes ?? m?.cyl_faces;
+    if (m) dl.append(el("dt", { text: "through-holes" }), el("dd", { class: thru === 4 ? "" : "bad", text: `${thru} of 4${m.cyl_faces !== thru ? ` (${m.cyl_faces} cylindrical faces)` : ""}` }),
+      el("dt", { text: "volume" }), el("dd", { text: `${fmt(m.volume_mm3)} mm³` }), el("dt", { text: "valid solid" }), el("dd", {}, status(m.valid, "yes", "no")));
+    const a = answer && Object.values(answer).find(x => x && x.part === part);
+    if (g) dl.append(el("dt", { text: "mass" }), el("dd", { class: g.mass ? "" : "bad", text: `${a?.mass_g ?? "–"} g reported · ${g.ref_mass_g} g true` }));
+    side.append(dl);
+  }
+  if (info.script) side.append(el("div", { class: "section-title", text: "Agent's build123d script" }), el("pre", { text: info.script }));
+  else side.append(el("p", { class: "sub err", text: "The agent never built this part." }));
+}
+
+function renderFacts(facts) {
+  const box = $("#factbox"); if (!box) return;
+  const keys = Object.keys(facts || {});
+  if (!keys.length) { box.replaceChildren(); return; }
+  const t = el("table");
+  t.append(el("thead", {}, el("tr", {}, el("th", { text: "fact" }), el("th", { text: "value" }), el("th", { text: "source" }), el("th", { text: "pinned" }))));
+  const tb = el("tbody");
+  for (const k of keys.sort()) { const f = facts[k]; tb.append(el("tr", {}, el("td", { text: k }), el("td", { text: JSON.stringify(f.value) }), el("td", { text: f.source || "" }), el("td", { text: f.pinned ? "yes" : "" }))); }
+  t.append(tb);
+  box.replaceChildren(el("details", {}, el("summary", { text: `Agent's final working state: ${keys.length} facts` }), t));
+}
+
+// ------------------------------------------------------------------ 3D viewer
+let viewer = null;
+class Viewer {
+  constructor(root) {
+    this.root = root;
+    this.scene = new THREE.Scene();
+    this.camera = new THREE.PerspectiveCamera(40, 1, 0.1, 5000);
+    this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    root.append(this.renderer.domElement);
+    this.controls = new OrbitControls(this.camera, this.renderer.domElement);
+    this.controls.enableDamping = true;
+    this.scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 1.2));
+    const key = new THREE.DirectionalLight(0xffffff, 1.4); key.position.set(80, -120, 160); this.scene.add(key);
+    const fill = new THREE.DirectionalLight(0xffffff, 0.5); fill.position.set(-100, 80, 60); this.scene.add(fill);
+    this.group = new THREE.Group(); this.scene.add(this.group);
+    this.msg = el("div", { class: "viewer-msg" }); root.append(this.msg);
+    this.opts = { showAgent: true, showRef: true };
+    const tools = el("div", { class: "viewer-tools" });
+    const tog = (label, key) => { const cb = el("input", { type: "checkbox" }); cb.checked = this.opts[key]; cb.onchange = () => { this.opts[key] = cb.checked; this.apply(); }; return el("label", {}, cb, label); };
+    tools.append(tog("agent part", "showAgent"), tog("reference (outline; red = mismatch)", "showRef"),
+      el("label", { style: "cursor:pointer", onclick: () => this.frame() }, "reset view"));
+    root.append(tools);
+    new ResizeObserver(() => this.resize()).observe(root);
+    this.resize();
+    const loop = () => { this.controls.update(); this.renderer.render(this.scene, this.camera); this.raf = requestAnimationFrame(loop); };
+    loop();
+  }
+  resize() { const w = this.root.clientWidth, h = this.root.clientHeight; if (!w) return; this.renderer.setSize(w, h); this.camera.aspect = w / h; this.camera.updateProjectionMatrix(); }
+  geom(mesh) {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.Float32BufferAttribute(mesh.positions, 3));
+    g.setIndex(mesh.indices); g.computeVertexNormals();
+    const c = mesh.bbox, center = new THREE.Vector3((c.min[0] + c.max[0]) / 2, (c.min[1] + c.max[1]) / 2, (c.min[2] + c.max[2]) / 2);
+    g.translate(-center.x, -center.y, -center.z);  // compare shapes centred, as the grader does
+    return g;
+  }
+  async load(run, part, { agent, ref, mismatch }) {
+    this.group.clear(); this.agentObj = this.refObj = null; this.mismatch = mismatch;
+    this.msg.textContent = "Loading mesh…"; this.msg.style.display = "grid";
+    const get = k => api(`/api/mesh?run=${encodeURIComponent(run)}&part=${encodeURIComponent(part)}&kind=${k}`);
+    const [a, r] = await Promise.allSettled([agent ? get("agent") : Promise.reject(new Error("not built")), ref ? get("ref") : Promise.reject(new Error("no reference"))]);
+    if (a.status === "fulfilled") {
+      const g = this.geom(a.value);
+      // A wrong part turns see-through so the reference outline inside it stays visible.
+      const mesh = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ color: css("--series-1"), roughness: 0.55, metalness: 0.1,
+        transparent: mismatch, opacity: mismatch ? 0.45 : 1, depthWrite: !mismatch, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 }));
+      const edges = new THREE.LineSegments(new THREE.EdgesGeometry(g, 25), new THREE.LineBasicMaterial({ color: 0x0b0b0b, transparent: true, opacity: 0.35 }));
+      this.agentObj = new THREE.Group(); this.agentObj.add(mesh, edges); this.group.add(this.agentObj);
+    }
+    if (r.status === "fulfilled") {
+      const g = this.geom(r.value);
+      this.refObj = new THREE.LineSegments(new THREE.EdgesGeometry(g, 25), new THREE.LineBasicMaterial({ color: css(mismatch ? "--critical" : "--ref-line") }));
+      this.group.add(this.refObj);
+    }
+    if (!this.agentObj && !this.refObj) { this.msg.textContent = a.reason?.message || "Nothing to show."; return; }
+    this.msg.textContent = !this.agentObj ? `Agent part: ${a.reason?.message}. Showing the reference only.` : "";
+    this.msg.style.display = this.msg.textContent ? "grid" : "none";
+    if (this.msg.textContent) this.msg.style.alignItems = "end";
+    this.apply(); this.frame();
+  }
+  apply() { if (this.agentObj) this.agentObj.visible = this.opts.showAgent; if (this.refObj) this.refObj.visible = this.opts.showRef; }
+  restyle() {
+    if (this.agentObj) this.agentObj.children[0].material.color.set(css("--series-1"));
+    if (this.refObj) this.refObj.material.color.set(css(this.mismatch ? "--critical" : "--ref-line"));
+  }
+  frame() {
+    const box = new THREE.Box3().setFromObject(this.group); if (box.isEmpty()) return;
+    const size = box.getSize(new THREE.Vector3()).length();
+    this.camera.up.set(0, 0, 1);
+    this.camera.position.set(size * 0.7, -size * 1.0, size * 0.8);
+    this.camera.near = size / 100; this.camera.far = size * 20; this.camera.updateProjectionMatrix();
+    this.controls.target.set(0, 0, 0); this.controls.update();
+  }
+}
+
+// ------------------------------------------------------------------ boot
+$("#refresh").onclick = async () => { await Promise.all([loadResults(), loadRuns()]); if (curRun) selectRun(curRun); };
+new ResizeObserver(() => renderBench()).observe($("#chart-curve"));
+applyTheme();
+await Promise.all([loadResults(), loadRuns()]);
+</script>
+</body>
+</html>

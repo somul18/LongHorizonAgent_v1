@@ -49,12 +49,25 @@ class ToolBox:
 
 def recall_tool(archive: Archive) -> Tool:
     def fn(args: dict) -> str:
-        hits = archive.recall(str(args.get("query", "")), k=int(args.get("k", 5)), kinds=args.get("kinds"))
+        k = int(args.get("k", 5))
+        # Over-fetch, then drop archived results of earlier recalls: matching its own past
+        # queries sends a model in circles instead of back to the facts.
+        hits = [h for h in archive.recall(str(args.get("query", "")), k=k + 20, kinds=args.get("kinds"))
+                if not (h.kind == "observation" and h.key == "recall")][:k]
         if not hits:
             return "recall: no matches"
-        return "\n".join(f"[step {h.step}] {h.kind} {h.key}: {json.dumps(h.payload, default=str)[:400]}" for h in hits)
+        return "\n".join(_format_hit(h) for h in hits)
 
-    return Tool("recall", 'search cold storage. args: {"query": str, "k": int, "kinds": [optional: evicted_fact|superseded_fact|dropped_fact|observation|note|closed_task]}', fn)
+    return Tool("recall", 'search cold storage by fact key or words, e.g. {"query": "base-plate.width"}. '
+                          'args: {"query": str, "k": int, "kinds": [optional: evicted_fact|superseded_fact|'
+                          'dropped_fact|observation|note|closed_task]}', fn)
+
+
+def _format_hit(h) -> str:
+    if h.kind.endswith("_fact") and "value" in h.payload:  # one short line per fact: key = value
+        src = f" (src: {h.payload['source']})" if h.payload.get("source") else ""
+        return f"[step {h.step}] {h.kind} {h.key} = {json.dumps(h.payload['value'], default=str)}{src}"
+    return f"[step {h.step}] {h.kind} {h.key}: {json.dumps(h.payload, default=str)[:300]}"
 
 
 # ------------------------------------------------------------------ Nimble
