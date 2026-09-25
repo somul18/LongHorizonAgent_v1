@@ -102,11 +102,30 @@ The CAD tools (`lha/cad.py`) are ordinary `Tool`s, so any agent can use them: `c
 (`valid`, `bbox_mm`, `volume_mm3`, `cyl_faces`, `mass_g`). Scripts and exports are written to the run
 directory and never into the prompt. Scripts run with `exec`, so run the agent in a sandbox.
 
+## Dashboard: benchmarks and CAD parts
+
+```bash
+python -m lha.ui          # opens http://127.0.0.1:8765, reads ./results
+```
+
+- **Benchmarks tab:** pick any `results/*results.json`, offline or `live_*`. Stat tiles show score,
+  peak prompt and token cost against the naive agent. One chart plots prompt size per step, where the
+  stateful prompt is flat and the naive one grows. Another plots peak prompt against inbox length.
+  A table lists every run.
+- **CAD parts tab:** every DesignDesk run, with a 3D view of each part the agent built. The reference
+  part from the true spec is drawn as an outline, and a wrong part turns see-through with a red outline.
+  Next to it: pass/fail for geometry and mass, spec against measured dimensions, the build123d script
+  the agent wrote, and the agent's final working state.
+
+Runs save what the dashboard needs (`runs/<run>/summary.json` and each part as `.brep`). Runs made
+before the dashboard existed show their scripts, but no 3D view. Live runs are prefixed `live_`, so
+they never overwrite offline runs. three.js loads from jsDelivr, so the browser needs internet access.
+
 ## Quick start
 
 ```bash
 pip install -e ".[dev,aws,cad]"
-pytest -q                                # 11 tests: ops, compaction, pins, parsing, flat-vs-growing, crash/resume, CAD
+pytest -q                                # 17 tests: ops, compaction, pins, parsing, flat-vs-growing, crash/resume, CAD
 python -m lha.bench.run                  # offline benchmark -> results/report.md
 python -m lha.bench.run --env design     # CAD benchmark -> results/design_report.md
 
@@ -143,6 +162,7 @@ lha/agent.py        StatefulAgent (checkpoint/resume) and NaiveAgent baseline
 lha/llm.py          Bedrock, OpenAI-compatible (Liquid), Scripted
 lha/tools.py        tool box, recall, Nimble web tools
 lha/cad.py          build123d CAD workspace + tools, geometric grading
+lha/ui/             local dashboard: benchmark charts + 3D part viewer (python -m lha.ui)
 lha/sinks.py        JSONL + Tinybird telemetry
 lha/bench/          IncidentDesk + DesignDesk (CAD) envs, benchmark runner
 tinybird/           datasources + API endpoints

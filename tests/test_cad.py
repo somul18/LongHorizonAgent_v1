@@ -55,3 +55,20 @@ def test_design_desk_grades_stale_spec_as_wrong():
     g = env.grade({qid: {"part": part, "mass_g": 0}})
     assert g[qid] == {**g[qid], "geometry": False, "mass": False}
     assert env.score({}) == 0.0
+
+
+def test_ui_serves_runs_grades_and_meshes(tmp_path):
+    from lha.bench.run import run_one
+    from lha.ui.server import UI
+
+    run_one("stateful", 60, 1, 700, False, tmp_path, "design")
+    ui = UI(tmp_path)
+    (run,) = ui.run_list()
+    assert run["run_id"] == "design_stateful-n60-s1" and run["score"] == 1.0 and len(run["parts"]) == 3
+    d = ui.run_detail(run["run_id"])
+    part = run["parts"][0]
+    assert d["parts"][part]["measure"]["valid"] and "result" in d["parts"][part]["script"]
+    agent, ref = ui.mesh(run["run_id"], part, "agent"), ui.mesh(run["run_id"], part, "ref")
+    assert agent["bbox"]["max"] == pytest.approx(ref["bbox"]["max"]) and len(agent["indices"]) % 3 == 0
+    with pytest.raises(ValueError):
+        ui.run_detail("../etc")

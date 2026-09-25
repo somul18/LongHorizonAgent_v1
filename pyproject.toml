@@ -15,3 +15,6 @@ lha = "lha.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["lha*"]
+
+[tool.setuptools.package-data]
+lha = ["ui/index.html"]

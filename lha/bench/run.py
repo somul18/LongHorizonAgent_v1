@@ -34,7 +34,7 @@ ENVS = {
 
 def run_one(kind: str, n: int, seed: int, budget: int, live: bool, out: Path, env_name: str = "incident") -> dict:
     mod = ENVS[env_name][0]()
-    run_id = f"{ENVS[env_name][2]}{kind}-n{n}-s{seed}"
+    run_id = f"{'live_' if live else ''}{ENVS[env_name][2]}{kind}-n{n}-s{seed}"  # live runs never overwrite offline ones
     if env_name == "design":
         env = mod.DesignDesk(n_messages=n, seed=seed, out_dir=out / "runs" / run_id / "cad")
     else:
@@ -54,12 +54,23 @@ def run_one(kind: str, n: int, seed: int, budget: int, live: bool, out: Path, en
         agent = NaiveAgent(**common)
     answer = agent.run()
     p = agent.stats.prompt_tokens_per_step
-    return {
+    row = {
         "env": env_name, "agent": kind, "messages": n, "seed": seed, "score": env.score(answer), "steps": agent.stats.steps,
         "total_input_tokens": agent.stats.input_tokens, "peak_prompt_tokens": max(p) if p else 0,
         "final_prompt_tokens": p[-1] if p else 0, "parse_errors": agent.stats.parse_errors,
         "curve": p,
     }
+    # What the UI needs to inspect this run later: the answer and, for DesignDesk, per-part grades and specs.
+    summary = {k: v for k, v in row.items() if k != "curve"} | {"run_id": run_id, "model": llm.name, "live": live,
+                                                                 "budget": budget if kind == "stateful" else None,
+                                                                 "answer": answer}
+    if env_name == "design":
+        summary["grade"] = env.grade(answer)
+        summary["spec"] = {part: env.spec(part) for part in env.questions.values()}
+    run_dir = out / "runs" / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "summary.json").write_text(json.dumps(summary, indent=1, default=str))
+    return row
 
 
 def main(argv=None) -> None:

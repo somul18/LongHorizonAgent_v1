@@ -105,6 +105,7 @@ class CadWorkspace:
         if self.out_dir:  # keep the source next to the exports; the prompt never holds it
             self.out_dir.mkdir(parents=True, exist_ok=True)
             (self.out_dir / f"{_safe(name)}.py").write_text(script)
+            b.export_brep(result, str(self.out_dir / f"{_safe(name)}.brep"))  # exact shape, for the UI
         return result
 
     def _get(self, name: str):
