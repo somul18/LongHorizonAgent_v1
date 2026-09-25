@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 pytest.importorskip("build123d")
@@ -82,3 +84,30 @@ def test_ui_serves_runs_grades_and_meshes(tmp_path):
     assert agent["bbox"]["max"] == pytest.approx(ref["bbox"]["max"]) and len(agent["indices"]) % 3 == 0
     with pytest.raises(ValueError):
         ui.run_detail("../etc")
+
+
+def test_memory_inspector_trace_and_views(tmp_path):
+    import json
+
+    from lha.bench.run import run_one
+    from lha.inspect import Inspector
+    from lha.ui.server import UI
+
+    run_one("stateful", 120, 2, 700, False, tmp_path, "design")
+    run_dir = tmp_path / "runs" / "design_stateful-n120-s2"
+    recs = [json.loads(line) for line in (run_dir / "trace.jsonl").read_text().splitlines()]
+    assert recs[-1]["done"] and len(recs) == recs[-1]["step"]
+    # the trace carries what the inspector needs: overwrites with their old value, archive traffic, sizes
+    assert any(old is not None and old != new for r in recs for _, old, new in r["changes"])
+    assert any(kind == "evicted_fact" for r in recs for kind, *_ in r["archived"])
+    assert recs[-1]["naive_tokens"] > 3 * recs[-1]["prompt_tokens"]
+    summary = json.loads((run_dir / "summary.json").read_text())
+    assert all(p.endswith(".step") and Path(p).exists() for p in summary["step_files"])
+
+    ins = Inspector(run_dir.name, 120, summary)
+    frames = [ins.feed(r) for r in recs]
+    assert "← UPDATED" in "".join(frames) and "Evicted to archive" in "".join(frames)
+    assert "Geometry validator" in frames[-1] and "score 1.00" in frames[-1]
+
+    t = UI(tmp_path).trace(run_dir.name, after=len(recs) - 5)
+    assert [r["step"] for r in t["records"]] == [r["step"] for r in recs[-5:]] and t["done"] and t["total_messages"] == 120

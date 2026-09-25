@@ -243,7 +243,26 @@ def stateful_policy(system: str, prompt: str) -> str:
             return missing[0] if missing else {a: facts[f"{part}.{a}"] for a in ATTRS}
         built = {p: float(facts[f"{p}.mass_g"]) for _, p in requests if f"{p}.mass_g" in facts}
         action = _next_action(requests, spec, built)
+    ops += _plan_ops(_section(prompt, "PLAN"), action["tool"], bool(requests))
     return json.dumps({"thought": action["tool"], "state_ops": ops, "action": action})
+
+
+PLAN = [("track", "Track engineering changes"), ("cad", "Produce final CAD"), ("validate", "Validate geometry")]
+
+
+def _plan_ops(plan: str, tool: str, building: bool) -> list[dict]:
+    """A short plan, kept current: what a real model is expected to do with its PLAN section.
+    Finished tasks may have been folded into a digest by the compactor; those are left alone."""
+    status = dict((t, st) for st, t in re.findall(r"^- \[(\w+)\] ([\w-]+):", plan, re.M))
+    if not plan.strip():
+        return [{"op": "add_task", "id": t, "title": title} for t, title in PLAN] + [
+            {"op": "update_task", "id": "track", "status": "doing"}]
+    want = {"track": "doing", "cad": "todo", "validate": "todo"}
+    if building:
+        want = {"track": "done", "cad": "doing", "validate": "todo"}
+    if tool == "finish":
+        want = {"track": "done", "cad": "done", "validate": "done"}
+    return [{"op": "update_task", "id": t, "status": st} for t, st in want.items() if t in status and status[t] != st]
 
 
 def naive_policy(system: str, prompt: str) -> str:

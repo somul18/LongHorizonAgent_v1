@@ -49,7 +49,9 @@ class UI:
                 continue
             s = self._summary(d)
             parts = sorted(p.stem for p in (d / "cad").glob("*.brep")) if (d / "cad").is_dir() else []
-            out.append({"run_id": d.name, "parts": parts, "mtime": d.stat().st_mtime,
+            trace = d / "trace.jsonl"
+            out.append({"run_id": d.name, "parts": parts, "mtime": max(d.stat().st_mtime, trace.stat().st_mtime if trace.exists() else 0),
+                        "has_trace": trace.exists(),
                         **{k: s.get(k) for k in ("env", "agent", "messages", "seed", "score", "steps", "model", "live")}})
         return out
 
@@ -67,6 +69,25 @@ class UI:
             facts = {k: {"value": f.get("value"), "pinned": f.get("pinned"), "source": f.get("source")}
                      for k, f in st.get("facts", {}).items()}
         return {"run_id": run_id, "summary": s, "parts": parts, "facts": facts}
+
+    def trace(self, run_id: str, after: int = 0) -> dict:
+        """Memory-inspector records with step > after (the page polls this while a run is live)."""
+        d = self._run_dir(run_id)
+        p = d / "trace.jsonl"
+        if not p.exists():
+            raise FileNotFoundError("this run has no trace (it predates the inspector, or is a naive run)")
+        recs = []
+        for line in p.read_text().splitlines():
+            try:
+                r = json.loads(line)
+            except json.JSONDecodeError:  # a line still being written
+                break
+            if r["step"] > after:
+                recs.append(r)
+        m = re.search(r"-n(\d+)-", run_id)
+        summary = self._summary(d)
+        return {"records": recs, "total_messages": int(m[1]) if m else None,
+                "summary": summary or None, "done": bool(summary) or any(r["done"] for r in recs)}
 
     def mesh(self, run_id: str, part: str, kind: str) -> dict:
         d = self._run_dir(run_id)
@@ -172,6 +193,8 @@ def make_handler(ui: UI):
                     return self._json(ui.run_list())
                 if u.path == "/api/run":
                     return self._json(ui.run_detail(q.get("id", "")))
+                if u.path == "/api/trace":
+                    return self._json(ui.trace(q.get("run", ""), int(q.get("after", 0) or 0)))
                 if u.path == "/api/mesh":
                     return self._json(ui.mesh(q.get("run", ""), q.get("part", ""), q.get("kind", "agent")))
                 return self._json({"error": "not found"}, 404)

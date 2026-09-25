@@ -33,6 +33,16 @@ Reply with ONE JSON object and nothing else:
 Use {"tool": "finish", "args": {"answer": ...}} when the goal is achieved."""
 
 
+def naive_system_prompt(tools: ToolBox) -> str:
+    return ("You are an agent. The transcript below is your memory.\nTools:\n" + tools.help()
+            + "\n\n" + RESPONSE_FORMAT + '\n(You may omit "state_ops".)')
+
+
+def transcript_line(step: int, text: str, tool: str, obs: str) -> str:
+    """One entry of the naive agent's transcript (kept identical in both places)."""
+    return f"[step {step}] you: {text.strip()}\n[step {step}] {tool} -> {obs}"
+
+
 def parse_response(text: str) -> dict:
     """Extract the first balanced JSON object from model output."""
     fence = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.S)
@@ -109,12 +119,16 @@ class _BaseAgent:
 class StatefulAgent(_BaseAgent):
     kind = "stateful"
 
-    def __init__(self, *args, compactor: Compactor | None = None, **kw):
+    def __init__(self, *args, compactor: Compactor | None = None, observers=(), **kw):
         super().__init__(*args, **kw)
         self.compactor = compactor or Compactor()
         self.tools.add(recall_tool(self.archive))
         self.state = self._load() or WorkingState(goal=self.goal)
         self._feedback = ""
+        # Memory inspector: every step also produces a trace record (runs/<id>/trace.jsonl) and is
+        # handed to observers, e.g. the live terminal view. See lha/inspect.py.
+        self.observers = list(observers)
+        self._naive_chars = self._resume_naive_chars()
 
     # ---------------------------------------------------------------- persistence
     def _ckpt(self) -> Path | None:
@@ -163,7 +177,9 @@ class StatefulAgent(_BaseAgent):
         self.stats.steps += 1
         self.stats.add(usage)
 
-        tool, args, op_errors = "none", {}, []
+        facts_before = {k: f.value for k, f in s.facts.items()}
+        archived_before = len(self.archive.items)
+        tool, args, op_errors, resp = "none", {}, [], {}
         try:
             resp = parse_response(text)
             op_errors = apply_ops(s, resp.get("state_ops", []),
@@ -178,6 +194,7 @@ class StatefulAgent(_BaseAgent):
             self.stats.op_errors += len(op_errors)
             self._feedback += "\nState op errors: " + "; ".join(op_errors)
 
+        obs = ""
         if tool == "finish":
             s.done, s.answer = True, args.get("answer")
             s.observation = ""
@@ -188,6 +205,7 @@ class StatefulAgent(_BaseAgent):
 
         evicted = self.compactor.enforce(s, self.archive)
         self._save()
+        self._trace(usage, text, resp, tool, args, obs, facts_before, archived_before, op_errors)
         self._emit({
             "step": s.step, "tool": tool, "prompt_tokens": usage.input_tokens, "output_tokens": usage.output_tokens,
             "state_tokens": s.tokens(), "n_facts": len(s.facts), "n_tasks": len(s.tasks),
@@ -201,6 +219,61 @@ class StatefulAgent(_BaseAgent):
 
     def _archive(self, kind: str, key: str, payload: dict) -> None:
         self.archive.put(self.state.step, kind, key, payload)
+
+    # ---------------------------------------------------------------- memory inspector trace
+    def _trace_path(self) -> Path | None:
+        return self.run_dir / "trace.jsonl" if self.run_dir else None
+
+    def _resume_naive_chars(self) -> int:
+        p = self._trace_path()
+        if p and p.exists():
+            lines = p.read_text().splitlines()
+            if lines:
+                return int(json.loads(lines[-1]).get("naive_chars", 0))
+        return 0
+
+    def _trace(self, usage: Usage, text: str, resp: dict, tool: str, args: dict, obs: str,
+               facts_before: dict, archived_before: int, op_errors: list[str]) -> None:
+        s = self.state
+        # What the naive agent would be reading at this step: the same goal, plus every earlier
+        # reply and tool result replayed as a transcript. An estimate, measured with the same yardstick.
+        head = f"# GOAL\n{self.goal}\n\n# TRANSCRIPT\n"
+        naive_tokens = (estimate_tokens(naive_system_prompt(self.tools)) + estimate_tokens(head)
+                        + (self._naive_chars + 3) // 4)
+        if tool not in ("finish", "none"):
+            self._naive_chars += len(transcript_line(s.step, text, tool, obs)) + 1
+        new_items = self.archive.items[archived_before:]
+        rec = {
+            "step": s.step, "tool": tool, "args": _short(args, 400), "observation": obs[:600],
+            "thought": str(resp.get("thought", ""))[:300], "ops": _short(resp.get("state_ops", []), 1200),
+            "changes": [[k, facts_before.get(k), f.value] for k, f in s.facts.items() if facts_before.get(k) != f.value],
+            "archived": [[it.kind, it.key, it.payload.get("value")] for it in new_items if it.kind != "observation"],
+            "facts": {k: f.value for k, f in s.facts.items()},
+            "pinned": [k for k, f in s.facts.items() if f.pinned],
+            "tasks": [[t.id, t.title, t.status] for t in s.tasks.values()],
+            "questions": list(s.questions), "focus": s.focus, "archived_keys": len(s.archived_keys),
+            "prompt_tokens": usage.input_tokens, "state_tokens": s.tokens(), "naive_tokens": naive_tokens,
+            "naive_chars": self._naive_chars, "archive_size": len(self.archive.items),
+            "op_errors": op_errors, "parse_error": self._feedback.startswith("Your last reply"),
+            "done": s.done, "answer": s.answer if s.done else None, "model": self.llm.name,
+        }
+        p = self._trace_path()
+        if p:
+            with p.open("a") as f:
+                f.write(json.dumps(rec, default=str) + "\n")
+        for ob in self.observers:
+            ob(rec)
+
+
+def _short(obj: Any, limit: int) -> Any:
+    """Keep trace records small: long strings (e.g. CAD scripts) are cut, structure is kept."""
+    if isinstance(obj, str):
+        return obj if len(obj) <= limit else obj[:limit] + "…"
+    if isinstance(obj, dict):
+        return {k: _short(v, limit) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_short(v, limit) for v in obj]
+    return obj
 
 
 class NaiveAgent(_BaseAgent):
@@ -222,8 +295,7 @@ class NaiveAgent(_BaseAgent):
         return self._answer
 
     def system_prompt(self) -> str:
-        return ("You are an agent. The transcript below is your memory.\nTools:\n" + self.tools.help()
-                + "\n\n" + RESPONSE_FORMAT + '\n(You may omit "state_ops".)')
+        return naive_system_prompt(self.tools)
 
     def step(self) -> None:
         prompt = f"# GOAL\n{self.goal}\n\n# TRANSCRIPT\n" + "\n".join(self.history)
@@ -241,7 +313,7 @@ class NaiveAgent(_BaseAgent):
             self._done, self._answer = True, args.get("answer")
         elif tool != "none":
             obs = self.tools.call(tool, args)
-            self.history.append(f"[step {self.stats.steps}] you: {text.strip()}\n[step {self.stats.steps}] {tool} -> {obs}")
+            self.history.append(transcript_line(self.stats.steps, text, tool, obs))
         self._emit({"step": self.stats.steps, "tool": tool, "prompt_tokens": usage.input_tokens,
                     "output_tokens": usage.output_tokens, "state_tokens": estimate_tokens(prompt)})
         if self.verbose:
