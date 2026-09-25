@@ -73,7 +73,8 @@ def _with_unit(key: str, v) -> str:
 class Inspector:
     """Keeps a little context across records (the entity in focus, the previous event)."""
 
-    def __init__(self, run_id: str = "", total_messages: int | None = None, summary: dict | None = None):
+    def __init__(self, run_id: str = "", total_messages: int | None = None, summary: dict | None = None,
+                 intent: dict | None = None):
         self.run_id = run_id
         self.total = total_messages
         self.summary = summary
@@ -82,6 +83,8 @@ class Inspector:
         self.inbox = (0, total_messages)
         self.history: list[tuple[int, int, int]] = []  # (step, prompt, naive) for the bar history
         self.builds: dict[str, dict] = {}  # part -> the agent's own check of its latest build
+        self.intent = intent  # {"part", "request", "interpretation"} when a part started as design intent
+        self.intent_changes: list[tuple[str, str, object, object]] = []  # (source, attr, old, new) since the intent
         self.archived_facts = 0  # facts moved to the archive so far: superseded, evicted or dropped
         self.recalls = 0         # recall operations so far
         from .describe import tracker_for
@@ -111,7 +114,20 @@ class Inspector:
         self.recalls += rec["tool"] == "recall"
 
         design = self.design.feed(rec)
-        out = [self._header(rec), "", self._event(event, rec), "", self._state(rec, changed), ""]
+        if self.intent:
+            p = self.intent["part"] + "."
+            srcs = rec.get("sources", {})
+            for k, old, new in rec["changes"]:
+                src = srcs.get(k, "")
+                # every change that came from an ECO, even when the old value was archived at the time;
+                # not the intent itself, not recalls (same value, back from the archive), not build results
+                if k.startswith(p) and old != new and not k.endswith(".mass_g") and src and "recall" not in src \
+                        and src not in ("design_intent", "cad_build"):
+                    self.intent_changes.append((src, k[len(p):], old, new))
+        out = [self._header(rec), ""]
+        if self.intent:
+            out += [self._intent(rec), ""]
+        out += [self._event(event, rec), "", self._state(rec, changed), ""]
         if design:
             out += [self._understanding(design), ""]
         out += [self._operation(rec), "", self._memory(rec)]
@@ -157,11 +173,12 @@ class Inspector:
         shown = sorted(k for k in facts if self.entity and k.startswith(self.entity + "."))
         if not shown:
             shown = sorted(facts)[:6]
-        recalled = {op.get("key") for op in rec["ops"] or [] if op.get("op") == "set_fact" and op.get("source") == "recall"}
+        recalled = {op.get("key") for op in rec["ops"] or [] if op.get("op") == "set_fact" and "recall" in str(op.get("source", ""))}
         for k in shown:
-            mark = green("  ← RECALLED") if k in recalled else yellow("  ← UPDATED") if k in changed else ""
-            pin = " *" if k in pinned else ""
-            lines.append(f"  {k:<34}{_with_unit(k, facts[k]):>14}{pin}{mark}")
+            mark = green("  RECALLED") if k in recalled else yellow("  UPDATED") if k in changed else ""
+            pin = " *" if k in pinned else "  "
+            src = _provenance(rec.get("sources", {}).get(k, ""))
+            lines.append(f"  {k:<32}{_with_unit(k, facts[k]):>12}{pin} {dim('← ' + src) if src else ''}{mark}")
         others = len(facts) - len(shown)
         parts = len({k.split('.')[0] for k in facts})
         lines.append(dim(f"  + {others} more facts across {parts} parts · {rec['archived_keys']} keys archived")
@@ -172,6 +189,24 @@ class Inspector:
             lines += [f"  {icon.get(st, '○')} {title}" for _, title, st in rec["tasks"]]
         lines.append(dim("OPEN QUESTIONS"))
         lines += [f"  ? {q}" for q in rec["questions"]] or ["  None"]
+        return "\n".join(lines)
+
+    def _intent(self, rec: dict) -> str:
+        """Original design intent -> the ECOs that changed that part since -> its current spec."""
+        part, facts = self.intent["part"], rec["facts"]
+        head = bold("ORIGINAL DESIGN INTENT")
+        lines = [head + " " * max(1, W - _vis(head) - len(part)) + part, dim("─" * W)]
+        lines += [f'"{x}' if i == 0 else f" {x}" for i, x in enumerate(textwrap.wrap(self.intent["request"] + '"', W - 2))]
+        spec0 = (self.intent.get("interpretation") or {}).get("facts", {})
+        now = {a: facts.get(f"{part}.{a}") for a in ("length", "width", "thickness", "hole_diameter", "material")}
+        lines.append(f"  {'intent':<12}{_spec_line(spec0)}")
+        ch = self.intent_changes
+        if len(ch) > 4:
+            lines.append(dim(f"  … {len(ch) - 4} earlier change{'s' if len(ch) - 4 > 1 else ''}"))
+        for src, attr, old, new in ch[-4:]:
+            was = f"{_with_unit(attr, old)} → " if old is not None else dim("(was archived) ") + "→ "
+            lines.append(f"  {_provenance(src):<12}{attr.replace('_', ' ')} {was}{_with_unit(attr, new)}")
+        lines.append(f"  {bold('now'):<{12 + len(bold('now')) - 3}}{_spec_line(now)}")
         return "\n".join(lines)
 
     @staticmethod
@@ -216,7 +251,7 @@ class Inspector:
             lines.append("Superseded:  " + ", ".join(f"{k} = {_with_unit(k, v)} → archive" for k, v in sup)[:W - 13])
         if evi:
             lines.append(orange("Evicted to archive (over budget):  ") + ", ".join(evi)[:W - 35])
-        restored = [op.get("key") for op in ops if op.get("op") == "set_fact" and op.get("source") == "recall"]
+        restored = [op.get("key") for op in ops if op.get("op") == "set_fact" and "recall" in str(op.get("source", ""))]
         if restored:
             lines.append(green("Restored from archive:  ") + ", ".join(restored)[:W - 24])
         lines.append(dim("Action:  ") + _action(rec))
@@ -293,6 +328,23 @@ class Inspector:
         return "\n".join(lines)
 
 
+def _provenance(src: str) -> str:
+    """How a fact's source is shown: DESIGN INTENT, ECO-1234, ECO-1234 · recalled, BUILD."""
+    if not src:
+        return ""
+    base, recalled = src.replace(" via recall", ""), "via recall" in src
+    base = {"design_intent": "DESIGN INTENT", "cad_build": "BUILD", "recall": "archive", "eco": "ECO", "user": "USER"}.get(base, base)
+    return base + (" · recalled" if recalled else "")
+
+
+def _spec_line(spec: dict) -> str:
+    d = [spec.get(a) for a in ("length", "width", "thickness")]
+    dims = " × ".join(_val(x) if x is not None else "?" for x in d) + " mm"
+    mat = spec.get("material") or "?"
+    hole = f"Ø{_val(spec['hole_diameter'])}" if spec.get("hole_diameter") is not None else "Ø?"
+    return f"{dims} · {mat} · 4 × {hole} holes"
+
+
 def _action(rec: dict) -> str:
     tool, args = rec["tool"], rec["args"] or {}
     if tool == "cad_build":
@@ -340,7 +392,8 @@ def show(frame: str) -> None:
 
 def replay(run_dir: Path, speed: float, follow: bool, start: int) -> None:
     total, summary = _meta(run_dir)
-    ins = Inspector(run_dir.name, total, summary)
+    intent = json.loads((run_dir / "intent.json").read_text()) if (run_dir / "intent.json").exists() else None
+    ins = Inspector(run_dir.name, total, summary, intent)
     path = run_dir / "trace.jsonl"
     while not path.exists():
         if not follow:

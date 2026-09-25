@@ -166,6 +166,41 @@ details summary { cursor: pointer; color: var(--text-secondary); font-size: 13px
 .checks .row { display: grid; grid-template-columns: 120px repeat(3, max-content); gap: 4px 16px; align-items: center; }
 @media (max-width: 700px) { .checks .row { grid-template-columns: 1fr; } }
 .checks .row .name { font-weight: 600; }
+
+/* ---------------- design intent */
+.modebar { display: inline-flex; gap: 4px; background: var(--surface-2); padding: 4px; border-radius: 10px; margin-bottom: 16px; }
+.modebar button { font: inherit; font-size: 13px; border: 0; background: none; color: var(--text-secondary); padding: 6px 14px; border-radius: 7px; cursor: pointer; }
+.modebar button[aria-selected="true"] { background: var(--surface-1); color: var(--text-primary); box-shadow: 0 1px 3px rgba(0,0,0,0.12); }
+.newdesign { max-width: 860px; }
+.newdesign h2 { font-size: 20px; margin: 0 0 4px; }
+.newdesign textarea { width: 100%; min-height: 96px; font: inherit; font-size: 15px; line-height: 1.5; padding: 12px; border-radius: 10px;
+  border: 1px solid var(--border); background: var(--surface-1); color: var(--text-primary); resize: vertical; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
+.chips button { font: inherit; font-size: 12px; border: 1px solid var(--border); background: var(--surface-1); color: var(--text-secondary);
+  border-radius: 999px; padding: 4px 10px; cursor: pointer; }
+.chips button:hover { color: var(--text-primary); }
+.btn.primary { background: var(--series-1); color: #fff; border-color: transparent; font-weight: 600; }
+.btn.primary:disabled { opacity: .45; cursor: not-allowed; }
+.row-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 12px; }
+.dgrid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+@media (max-width: 1000px) { .dgrid { grid-template-columns: 1fr; } }
+.quote { font-size: 15px; line-height: 1.55; border-left: 3px solid var(--text-muted); padding: 2px 0 2px 12px; margin: 0 0 12px; color: var(--text-primary); }
+.interp td { padding: 4px 8px; font-size: 13px; } .interp td.v { font-variant-numeric: tabular-nums; }
+.interp .ok { color: var(--good-text); font-weight: 700; } .interp .unk { color: #b77900; font-weight: 700; }
+.prov { font-size: 11px; font-weight: 700; letter-spacing: .03em; color: var(--text-muted); white-space: nowrap; }
+.prov.intent { color: var(--series-1); } .prov.eco { color: #c25a1c; } .prov.user { color: var(--good-text); }
+.notes { margin: 8px 0 0; padding-left: 18px; color: var(--text-secondary); font-size: 13px; }
+.dview { height: 330px; border-radius: 10px; overflow: hidden; background: var(--viewer-bg); position: relative; }
+.stale { background: rgba(237,161,0,0.14); color: #8a5a00; border-radius: 8px; padding: 6px 10px; font-size: 13px; margin-bottom: 8px; }
+.evo { display: grid; gap: 0; }
+.evo .node { border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; background: var(--surface-2); font-size: 13px; }
+.evo .node b { font-variant-numeric: tabular-nums; }
+.evo .node .lbl { font-size: 11px; font-weight: 700; letter-spacing: .04em; }
+.evo .arrow { color: var(--text-muted); padding: 2px 0 2px 14px; font-size: 12px; }
+.change-in { display: flex; gap: 8px; margin-top: 10px; }
+.change-in input { flex: 1; font: inherit; font-size: 14px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface-1); color: var(--text-primary); }
+.derr { color: var(--critical); font-size: 13px; margin-top: 6px; }
+.designs-list { margin-top: 22px; } .designs-list .runitem { max-width: 860px; }
 </style>
 <script type="importmap">
 { "imports": {
@@ -189,6 +224,12 @@ details summary { cursor: pointer; color: var(--text-secondary); font-size: 13px
 
 <main>
   <section id="tab-insp">
+    <div class="modebar" role="tablist" aria-label="Inspector mode">
+      <button data-mode="intent" aria-selected="true">Design intent</button>
+      <button data-mode="replay" aria-selected="false">Replay a run</button>
+    </div>
+    <div id="mode-intent"><div id="d-body"></div></div>
+    <div id="mode-replay" hidden>
     <div class="insp-head">
       <h2 id="i-title">Memory inspector</h2>
       <span class="meta" id="i-meta"></span>
@@ -204,6 +245,7 @@ details summary { cursor: pointer; color: var(--text-secondary); font-size: 13px
       <span class="badge" id="i-badge"></span>
     </div>
     <div id="i-body"><div class="empty">No traced runs yet. Run: python -m lha.bench.run --env design --sizes 200</div></div>
+    </div>
   </section>
 
   <section id="tab-bench" hidden>
@@ -286,7 +328,7 @@ function applyTheme() {
   else document.documentElement.setAttribute("data-theme", theme);
   $("#theme").textContent = "Theme: " + theme;
   try { localStorage.setItem("lha-theme", theme); } catch {}
-  renderBench(); viewer?.restyle();
+  renderBench(); viewer?.restyle(); D?.viewer?.restyle();
 }
 $("#theme").onclick = () => { theme = themes[(themes.indexOf(theme) + 1) % 3]; applyTheme(); };
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { renderBench(); viewer?.restyle(); });
@@ -644,7 +686,7 @@ $("#i-run").onchange = e => openTrace(e.target.value);
 
 async function openTrace(run) {
   stopPlay(); clearInterval(I.poll);
-  Object.assign(I, { run, recs: [], views: [], idx: 0, summary: null, done: false });
+  Object.assign(I, { run, recs: [], views: [], idx: 0, summary: null, done: false, intent: null });
   await pullTrace();
   I.idx = I.done ? 0 : Math.max(0, I.recs.length - 1);
   renderInspector();
@@ -656,8 +698,9 @@ async function pullTrace() {
   let d;
   try { d = await api(`/api/trace?run=${encodeURIComponent(I.run)}&after=${after}`); } catch (e) { $("#i-body").replaceChildren(el("div", { class: "empty err", text: e.message })); return; }
   const atEnd = I.idx >= I.recs.length - 1;
+  I.intent = d.intent;  // before deriving views: they follow the part that started as design intent
   for (const r of d.records) { I.recs.push(r); I.views.push(deriveView(I.views[I.views.length - 1], I.recs[I.recs.length - 2], r)); }
-  I.total = d.total_messages; I.summary = d.summary; I.done = d.done;
+  I.total = d.total_messages; I.summary = d.summary; I.done = d.done; I.intent = d.intent;
   if (I.done) clearInterval(I.poll);
   if (d.records.length && !I.playing && atEnd && I.recs.length) { I.idx = I.recs.length - 1; renderInspector(); }
   if (!d.records.length && I.done) renderInspector();
@@ -668,7 +711,14 @@ function deriveView(pv, prev, r) {
   const event = prev?.observation || "";
   const v = { event, prevTool: prev?.tool, inbox: pv?.inbox || [0, null], entity: pv?.entity || null, builds: pv?.builds || {},
     archivedFacts: (pv?.archivedFacts || 0) + r.archived.filter(a => a[0].endsWith("_fact")).length,
-    recalls: (pv?.recalls || 0) + (r.tool === "recall" ? 1 : 0), prevNaive: prev?.naive_tokens ?? null };
+    recalls: (pv?.recalls || 0) + (r.tool === "recall" ? 1 : 0), prevNaive: prev?.naive_tokens ?? null,
+    intentChanges: pv?.intentChanges || [] };
+  if (I.intent) {  // every ECO that changed the part that started as design intent
+    const p = I.intent.part + ".", src = r.sources || {};
+    const add = r.changes.filter(([k, o, n]) => k.startsWith(p) && o !== n && !k.endsWith(".mass_g") && src[k]
+      && !String(src[k]).includes("recall") && !["design_intent", "cad_build"].includes(src[k])).map(([k, o, n]) => [src[k], k.slice(p.length), o, n]);
+    if (add.length) v.intentChanges = [...v.intentChanges, ...add];
+  }
   const m = event.match(/^msg (\d+)\/(\d+):/); if (m) v.inbox = [+m[1], +m[2]];
   const first = (r.ops || []).find(o => o.op === "set_fact")?.key;
   const changed = r.changes.map(c => c[0]);
@@ -709,7 +759,7 @@ function renderInspector() {
   $("#i-title").textContent = `${bench}: step ${fmt(r.step)}` + (total ? ` · message ${fmt(read)} / ${fmt(total)}` : "");
   $("#i-meta").textContent = r.model;
   const changed = new Set(r.changes.map(c => c[0]));
-  const recalled = new Set((r.ops || []).filter(o => o.op === "set_fact" && o.source === "recall").map(o => o.key));
+  const recalled = new Set((r.ops || []).filter(o => o.op === "set_fact" && String(o.source || "").includes("recall")).map(o => o.key));
 
   // ---- incoming event
   const ev = el("div", { class: "card" }, el("h3", { text: "Incoming event" }));
@@ -733,6 +783,7 @@ function renderInspector() {
   for (const k of keys) {
     const tr = el("tr", { class: recalled.has(k) ? "rc" : changed.has(k) ? "hl" : "" },
       el("td", { class: "mono", text: k + (pinned.has(k) ? "  📌" : "") }), el("td", { class: "v mono", text: withUnit(k, r.facts[k]) }),
+      el("td", {}, provTag((r.sources || {})[k])),
       el("td", {}, recalled.has(k) ? el("span", { class: "tag rc", text: "← RECALLED" }) : changed.has(k) ? el("span", { class: "tag up", text: "← UPDATED" }) : null));
     ft.append(tr);
   }
@@ -839,11 +890,23 @@ function renderInspector() {
   }
 
   $("#i-body").replaceChildren(el("div", { class: "insp-grid" },
-    el("div", { class: "insp-col" }, ...[ev, ws, und, op].filter(Boolean)), el("div", { class: "insp-col" }, ...[mem, build].filter(Boolean))));
+    el("div", { class: "insp-col" }, ...[intentCard(r, v), ev, ws, und, op].filter(Boolean)), el("div", { class: "insp-col" }, ...[mem, build].filter(Boolean))));
   // the chart is the heaviest part: redraw it at most ~8 times a second while playing
   const now = performance.now();
   if (!I.playing || now - lastChart > 120 || r.done) { lastChart = now; drawInspChart(chartBox); I.lastChartEl = chartBox; }
   else if (I.lastSvg) chartBox.append(I.lastSvg);
+}
+
+function intentCard(r, v) {
+  if (!I.intent) return null;
+  const p = I.intent.part, sp0 = I.intent.interpretation?.facts || {};
+  const now = Object.fromEntries(ATTR_ORDER.map(a => [a, r.facts[`${p}.${a}`]]));
+  const chain = el("div", { class: "evo" }, el("div", { class: "node" }, el("span", { class: "lbl prov intent", text: "DESIGN INTENT" }), el("div", { class: "mono", text: specLine(sp0) })));
+  const ch = v.intentChanges;
+  if (ch.length > 4) chain.append(el("div", { class: "arrow", text: `↓ … ${ch.length - 4} earlier engineering changes` }));
+  for (const [src, attr, o, n] of ch.slice(-4)) chain.append(el("div", { class: "arrow", text: `↓ ${src}: ${attr.replace("_", " ")} ${o ?? "(archived)"} → ${n}` }));
+  chain.append(el("div", { class: "arrow", text: "↓" }), el("div", { class: "node" }, el("span", { class: "lbl", text: "NOW" }), el("div", { class: "mono", text: specLine(now) })));
+  return el("div", { class: "card" }, el("h3", {}, "Original design intent", el("span", { text: p })), el("p", { class: "quote", text: `“${I.intent.request}”` }), chain);
 }
 
 function drawInspChart(box) {
@@ -855,12 +918,161 @@ function drawInspChart(box) {
   I.lastSvg = box.firstChild;
 }
 
+
+// ------------------------------------------------------------------ design intent
+// Natural-Language Intent -> Structured State -> Current Design Understanding -> CAD Geometry.
+// The server interprets the request into set_fact operations; the state is the source of truth.
+const EXAMPLES = [
+  ["Complete spec", "Create a motor mounting plate 100 mm long, 80 mm wide and 4 mm thick from 6061 aluminum. Add four 5.3 mm through-holes, one near each corner, with the hole centers 6 mm from the adjacent edges."],
+  ["Missing thickness", "Make me an 80 × 60 mm steel sensor mounting plate with four M4 mounting holes."],
+  ["Rail clamp", "Create a 95 × 45 × 6 mm rail clamp from ABS with four 4.3 mm mounting holes."],
+];
+const D = { view: null, viewer: null, viewerEl: null, meshStep: null, err: "" };
+const ATTR_ORDER = ["length", "width", "thickness", "hole_diameter", "material"];
+const provLabel = src => {
+  if (!src) return ["", ""];
+  const recalled = src.includes("via recall"); const base = src.replace(" via recall", "");
+  const map = { design_intent: ["DESIGN INTENT", "intent"], user: ["USER", "user"], cad_build: ["BUILD", ""], recall: ["ARCHIVE", ""] };
+  const [t, c] = map[base] || [base, base.startsWith("ECO") ? "eco" : ""];
+  return [t + (recalled ? " · recalled" : ""), c];
+};
+const provTag = src => { const [t, c] = provLabel(src); return t ? el("span", { class: "prov " + c, text: "← " + t }) : null; };
+const specLine = sp => `${["length", "width", "thickness"].map(a => sp[a] ?? "?").join(" × ")} mm · ${sp.material ?? "?"} · 4 × Ø${sp.hole_diameter ?? "?"}`;
+
+async function post(path, body) {
+  const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+
+document.querySelectorAll(".modebar button").forEach(b => b.onclick = () => setMode(b.dataset.mode));
+function setMode(m) {
+  document.querySelectorAll(".modebar button").forEach(b => b.setAttribute("aria-selected", String(b.dataset.mode === m)));
+  $("#mode-intent").hidden = m !== "intent"; $("#mode-replay").hidden = m !== "replay";
+  if (m === "intent") D.viewer?.resize();
+}
+
+async function renderIntent() {
+  const box = $("#d-body");
+  if (!D.view) return renderNewDesign(box);
+  const v = D.view;
+  const spec = Object.fromEntries(v.facts.filter(f => f.key.startsWith(v.part + ".")).map(f => [f.attr, f.value]));
+  const nChanges = v.evolution.length - 1;
+  const head = el("div", { class: "insp-head" }, el("h2", { text: `DesignDesk: ${v.part.replace(/-/g, " ")} · ${nChanges ? nChanges + " change" + (nChanges > 1 ? "s" : "") + " since intent" : "initial design"}` }),
+    el("span", { class: "meta", text: `interpreter: ${v.interpretation.interpreter}` }),
+    el("button", { class: "btn", style: "margin-left:auto", onclick: () => { D.view = null; renderIntent(); }, text: "New design" }));
+
+  // 1. original design intent + interpretation
+  const interp = el("table", { class: "interp" });
+  for (const a of ATTR_ORDER) {
+    const val = v.interpretation.facts[a];
+    interp.append(el("tr", {}, el("td", { class: val != null ? "ok" : "unk", text: val != null ? "✓" : "?" }),
+      el("td", { class: "mono", text: a.replace("_", " ") }), el("td", { class: "v mono", text: val != null ? withUnit(a, val) : "not specified" }),
+      el("td", {}, val != null ? provTag("design_intent") : el("span", { class: "prov", text: "UNKNOWN: not guessed" }))));
+  }
+  const intentCard = el("div", { class: "card" }, el("h3", {}, "Original design intent", el("span", { text: "kept as written; never edited" })),
+    el("p", { class: "quote", text: `“${v.request}”` }), el("div", { class: "sub2", text: "Agent interpretation → state operations" }), interp,
+    v.interpretation.notes.length ? el("ul", { class: "notes" }, ...v.interpretation.notes.map(n => el("li", { text: n }))) : null);
+
+  // 2. current CAD
+  const cad = el("div", { class: "card" }, el("h3", {}, "Current CAD", el("span", { text: v.build ? "build123d / OpenCascade" : "" })));
+  if (v.build?.stale) cad.append(el("div", { class: "stale", text: "The state changed after this build. Rebuild to bring the CAD up to date." }));
+  const canBuild = !v.missing.length;
+  if (v.build) {
+    if (!D.viewerEl) { D.viewerEl = el("div", { class: "dview" }); D.viewer = new Viewer(D.viewerEl); }
+    cad.append(D.viewerEl);
+  } else cad.append(el("div", { class: "empty", text: canBuild ? "Not built yet." : `Can't build yet: ${v.missing.map(a => a.replace("_", " ")).join(", ")} not specified.` }));
+  const buildBtn = el("button", { class: "btn primary", onclick: () => act(() => post("/api/design/build", { id: v.id })),
+    text: v.build ? (v.build.stale ? "Rebuild CAD" : "Rebuild") : "Build CAD" });
+  buildBtn.disabled = !canBuild;
+  cad.append(el("div", { class: "row-actions" }, buildBtn,
+    v.build ? el("span", { class: "muted", text: `${v.part}.step · ${fmt(v.build.measure.volume_mm3)} mm³ · ${v.build.measure.mass_g} g` }) : null));
+
+  // 3. current design understanding
+  const und = el("div", { class: "card understanding" }, el("h3", {}, "Current design understanding", el("span", { text: "derived from the state" })),
+    el("p", { class: "und-text", text: v.understanding }),
+    el("div", { class: "muted", text: "Regenerated from the structured state after every change; the request above is only the starting point." }));
+
+  // 4. validation
+  const val = el("div", { class: "card" }, el("h3", {}, "Validation", el("span", { text: v.build ? (v.build.ok ? "all checks pass" : "checks failing") : "" })));
+  if (v.build) {
+    const c = v.build.checks, m = v.build.measure;
+    const rows = [["Geometry", c.geometry, "matches an independently constructed reference"],
+      ["Dimensions", c.dimensions, `${m.bbox_mm.join(" × ")} mm`], ["Through-holes", c.through_holes, `${m.z_through_holes} of 4`],
+      ["Valid solid", c.valid_solid, `${m.solids} solid`], ["Mass", c.mass, `${m.mass_g} g (${spec.material})`]];
+    val.append(el("dl", { class: "kv" }, ...rows.flatMap(([k, ok, detail]) => [el("dt", { text: k }), el("dd", {}, status(ok, detail, detail))])));
+    if (v.build.stale) val.append(el("div", { class: "stale", style: "margin-top:10px", text: "Validated against an earlier state." }));
+  } else val.append(el("div", { class: "muted", text: "Build the part to validate it." }));
+
+  // 5. current structured state (source of truth) + change box
+  const st = el("div", { class: "card" }, el("h3", {}, "Current structured state", el("span", { text: "source of truth" })));
+  const ft = el("table", { class: "facts" });
+  for (const f of v.facts) ft.append(el("tr", {}, el("td", { class: "mono", text: f.key }), el("td", { class: "v mono", text: withUnit(f.key, f.value) }), el("td", {}, provTag(f.source))));
+  st.append(ft);
+  if (v.questions.length) st.append(el("div", { class: "sub2", text: "Open questions" }), ...v.questions.map(q => el("div", { text: "? " + q })));
+  const input = el("input", { placeholder: v.missing.length ? `Answer, e.g. "${v.missing[0].replace("_", " ")} 5 mm"` : 'Engineering change, e.g. "ECO-1847: thickness 4 mm → 3 mm"', "aria-label": "Change" });
+  const send = () => input.value.trim() && act(() => post("/api/design/change", { id: v.id, text: input.value }));
+  input.onkeydown = e => { if (e.key === "Enter") send(); };
+  st.append(el("div", { class: "sub2", text: "Apply an engineering change or answer a question" }), el("div", { class: "change-in" }, input, el("button", { class: "btn", onclick: send, text: "Apply" })));
+  if (D.err) st.append(el("div", { class: "derr", text: D.err }));
+
+  // 6. evolution: intent -> changes -> now
+  const evo = el("div", { class: "card" }, el("h3", {}, "Design evolution", el("span", { text: "intent → changes → current" })));
+  const chain = el("div", { class: "evo" });
+  v.evolution.forEach((e, i) => {
+    if (i) chain.append(el("div", { class: "arrow", text: "↓ " + e.changes.map(([k, o, n]) => `${k.split(".")[1].replace("_", " ")} ${o ?? "?"} → ${n}`).join(", ") }));
+    const [t, c] = provLabel(i === 0 ? "design_intent" : e.label === "User" ? "user" : e.label);
+    chain.append(el("div", { class: "node" }, el("span", { class: "lbl prov " + c, text: t }), el("div", { class: "mono", text: specLine(e.spec) })));
+  });
+  chain.append(el("div", { class: "arrow", text: "↓" }), el("div", { class: "node" }, el("span", { class: "lbl", text: "CURRENT DESIGN UNDERSTANDING → CAD" }),
+    el("div", { text: v.build && !v.build.stale ? `built and ${v.build.ok ? "validated ✓" : "failing checks ✗"}` : "not built for this state yet" })));
+  evo.append(chain);
+
+  box.replaceChildren(head, el("div", { class: "dgrid" }, intentCard, cad, und, val, st, evo));
+  if (v.build && D.meshStep !== `${v.id}:${v.build.state_step}`) {
+    D.meshStep = `${v.id}:${v.build.state_step}`;
+    requestAnimationFrame(() => { D.viewer.resize(); D.viewer.load(v.id, v.part, { agent: true, ref: true, mismatch: !v.build.checks.geometry }); });
+  } else if (v.build) requestAnimationFrame(() => D.viewer.resize());
+}
+
+function renderNewDesign(box) {
+  const ta = el("textarea", { "aria-label": "Design intent", placeholder: "Describe the CAD object you want to create" });
+  ta.value = EXAMPLES[0][1];
+  const rules = el("input", { type: "checkbox" });
+  const card = el("div", { class: "card newdesign" },
+    el("h2", { text: "New design" }), el("p", { class: "sub", text: "Describe the CAD object you want to create. The agent turns every requirement you state into the structured state; anything you leave out stays unknown rather than guessed." }),
+    el("label", { class: "sub2", text: "Design intent" }), ta,
+    el("div", { class: "chips" }, ...EXAMPLES.map(([label, text]) => el("button", { onclick: () => { ta.value = text; }, text: label }))),
+    el("div", { class: "row-actions" },
+      el("button", { class: "btn primary", onclick: () => ta.value.trim() && act(() => post("/api/design", { request: ta.value, interpreter: rules.checked ? "rules" : "auto" })), text: "Create Design" }),
+      el("label", { class: "muted", style: "display:inline-flex;gap:6px;align-items:center" }, rules, "rule-based interpreter only (no model call)")),
+    D.err ? el("div", { class: "derr", text: D.err }) : null);
+  const list = el("div", { class: "designs-list" });
+  api("/api/designs").then(ds => {
+    if (!ds.length) return;
+    list.append(el("div", { class: "sub2", text: "Earlier designs" }),
+      ...ds.slice(0, 8).map(d => el("div", { class: "runitem", role: "button", tabindex: 0, onclick: () => openDesign(d.id) },
+        el("div", { class: "id", text: d.part }), el("div", { class: "meta" }, el("span", { text: d.request.slice(0, 110) + (d.request.length > 110 ? "…" : "") })))));
+  }).catch(() => {});
+  box.replaceChildren(card, list);
+}
+
+async function openDesign(id) { await act(() => api("/api/design?id=" + encodeURIComponent(id))); }
+async function act(fn) {
+  D.err = "";
+  try { D.view = await fn(); } catch (e) { D.err = e.message; }
+  renderIntent();
+  loadRuns();  // a built design also appears in the CAD parts tab
+}
+
 // ------------------------------------------------------------------ boot
 $("#refresh").onclick = async () => { await Promise.all([loadResults(), loadRuns()]); await loadInspectorRuns(); if (curRun) selectRun(curRun); };
 new ResizeObserver(() => renderBench()).observe($("#chart-curve"));
 applyTheme();
 await Promise.all([loadResults(), loadRuns()]);
 await loadInspectorRuns();
+renderIntent();
 </script>
 </body>
 </html>

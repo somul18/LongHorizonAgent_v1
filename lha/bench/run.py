@@ -35,12 +35,14 @@ ENVS = {
 
 
 def run_one(kind: str, n: int, seed: int, budget: int, live: bool, out: Path, env_name: str = "incident",
-            inspect_speed: float | None = None) -> dict:
+            inspect_speed: float | None = None, intent: bool = False) -> dict:
     """inspect_speed: render the Memory State Inspector for the stateful agent (steps/second; 0 = as fast as it runs)."""
     mod = ENVS[env_name][0]()
-    run_id = f"{'live_' if live else ''}{ENVS[env_name][2]}{kind}-n{n}-s{seed}"  # live runs never overwrite offline ones
+    intent = intent and env_name == "design"
+    run_id = (f"{'live_' if live else ''}{ENVS[env_name][2]}{kind}-n{n}-s{seed}"  # live runs never overwrite offline ones
+              + ("-intent" if intent else ""))
     if env_name == "design":
-        env = mod.DesignDesk(n_messages=n, seed=seed, out_dir=out / "runs" / run_id / "cad")
+        env = mod.DesignDesk(n_messages=n, seed=seed, out_dir=out / "runs" / run_id / "cad", intent=intent)
     else:
         env = mod.IncidentDesk(n_messages=n, seed=seed)
     if live:
@@ -48,6 +50,13 @@ def run_one(kind: str, n: int, seed: int, budget: int, live: bool, out: Path, en
     else:
         llm = ScriptedLLM(mod.stateful_policy if kind == "stateful" else mod.naive_policy, name=f"scripted-{kind}")
     shutil.rmtree(out / "runs" / run_id, ignore_errors=True)  # benchmarks start fresh (agents would resume)
+    if getattr(env, "intent_part", None):  # the original design intent, readable while the run is going
+        from ..intent import interpret_rules
+
+        (out / "runs" / run_id).mkdir(parents=True, exist_ok=True)
+        (out / "runs" / run_id / "intent.json").write_text(json.dumps(
+            {"part": env.intent_part, "request": env.intent_text,
+             "interpretation": interpret_rules(env.intent_text, part=env.intent_part).to_dict()}, indent=1))
     sinks = [JsonlSink(out / "steps.jsonl"), *sinks_from_env()]
     inspecting = inspect_speed is not None and kind == "stateful"
     common = dict(llm=llm, tools=ToolBox(env.tools()), goal=env.goal(), run_dir=out / "runs",
@@ -57,7 +66,8 @@ def run_one(kind: str, n: int, seed: int, budget: int, live: bool, out: Path, en
     if inspecting:
         from ..inspect import Inspector, show
 
-        inspector = Inspector(run_id, n)
+        intent_file = out / "runs" / run_id / "intent.json"
+        inspector = Inspector(run_id, n, intent=json.loads(intent_file.read_text()) if intent_file.exists() else None)
 
         def observe(rec: dict) -> None:
             if rec["done"]:
@@ -108,6 +118,8 @@ def main(argv=None) -> None:
     ap.add_argument("--live", action="store_true", help="use a real model from env instead of scripted policies")
     ap.add_argument("--out", default="results")
     ap.add_argument("--skip-naive-above", type=int, default=10**9, help="naive gets expensive fast with --live")
+    ap.add_argument("--intent", action="store_true",
+                    help="DesignDesk: one requested part starts from a natural-language design request, not ECOs")
     ap.add_argument("--inspect", action="store_true",
                     help="show the Memory State Inspector while the stateful agent runs (see python -m lha.inspect)")
     ap.add_argument("--inspect-speed", type=float, default=None,
@@ -128,7 +140,7 @@ def main(argv=None) -> None:
                 if kind == "naive" and n > a.skip_naive_above:
                     continue
                 speed = (a.inspect_speed if a.inspect_speed is not None else 0 if a.live else 30) if a.inspect else None
-                r = run_one(kind, n, seed, budget, a.live, out, a.env, speed)
+                r = run_one(kind, n, seed, budget, a.live, out, a.env, speed, a.intent)
                 rows.append(r)
                 print(f"{kind:9s} n={n:<5d} seed={seed} score={r['score']:.2f} steps={r['steps']:<5d} "
                       f"peak_prompt={r['peak_prompt_tokens']:<7d} total_in={r['total_input_tokens']:,}")

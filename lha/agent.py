@@ -249,6 +249,7 @@ class StatefulAgent(_BaseAgent):
             "changes": [[k, facts_before.get(k), f.value] for k, f in s.facts.items() if facts_before.get(k) != f.value],
             "archived": [[it.kind, it.key, it.payload.get("value")] for it in new_items if it.kind != "observation"],
             "facts": {k: f.value for k, f in s.facts.items()},
+            "sources": {k: f.source for k, f in s.facts.items()},  # provenance: design_intent, ECO-…, … via recall
             "pinned": [k for k, f in s.facts.items() if f.pinned],
             "tasks": [[t.id, t.title, t.status] for t in s.tasks.values()],
             "questions": list(s.questions), "focus": s.focus, "archived_keys": len(s.archived_keys),
