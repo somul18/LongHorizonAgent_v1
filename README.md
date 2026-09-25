@@ -6,8 +6,10 @@
 agent follows a mechanical design through thousands of engineering change orders, then writes
 **build123d** (OpenCascade) scripts that produce real 3D parts. Each part is graded geometrically
 against the true spec. A [Memory State Inspector](#watch-it-work-the-memory-state-inspector) shows, step
-by step, how the agent keeps a ~1.3k-token working state while a naive transcript grows past 160k tokens,
-and a 3D dashboard shows the parts it built.
+by step, how the agent keeps a ~1.3k-token working state while a naive transcript grows past 160k tokens.
+Every part is kept in three synchronized views: the structured state (the source of truth), a
+[Current Design Understanding](#current-design-understanding-three-views-of-one-design) written in plain
+English from that state, and the CAD geometry, which a 3D dashboard shows next to its reference.
 
 ```bash
 pip install -e ".[dev,aws,cad]"
@@ -267,6 +269,10 @@ see-through and the reference outline turns red. Here the part was built 8 mm th
 hand-made example; see [the dashboard](#the-dashboard)):
 
 ![A wrong part: see-through, with the red reference outline showing it is 2 mm too thick](docs/images/cad-part-fail.png)
+
+The Current Design Understanding above the grade still reads "95 × 45 × 6 mm". The working state had the
+right thickness, so the mistake was in the build step, not in memory. Putting the three views side by side
+is what lets you tell those two kinds of failure apart.
 
 **6. Where the files go.** For each run, `results/runs/<run_id>/cad/` holds each part's script (`.py`)
 and exact shape (`.brep`). `cad_export` writes STEP (for FreeCAD, Fusion 360, SolidWorks, Onshape) or STL
@@ -549,6 +555,9 @@ A local web page (stdlib HTTP server, bound to localhost, no extra installs). It
   halves; evictions and restores listed), and long-horizon memory: events, active prompt, naive context
   (with ↑ while it grows), context reduction, archived facts, recall operations, the two bars, and a chart
   of prompt size at every step so far.
+- A **Current Design Understanding** card beside the working state: the part in focus described in plain
+  English, regenerated from the facts at every step (dimensions, material, holes, latest ECO, and any
+  values currently archived).
 - In the build phase: the pipeline from historical events to working state, build123d, `.step` file and
   validator, with the agent's own checks per part and the final verdict, plus a button to open the parts in 3D.
 - See [Watch it work](#watch-it-work-the-memory-state-inspector) for the terminal version and what each part means.
@@ -566,9 +575,10 @@ A local web page (stdlib HTTP server, bound to localhost, no extra installs). It
 - A 3D view (three.js; drag to rotate, scroll to zoom) of each part the agent built, with the
   **reference part drawn as an outline over it**. If the part is wrong, the agent's part turns
   see-through and the outline turns red, so you see exactly where the shapes differ.
-- Beside it: pass/fail for geometry and mass, each spec value next to what was actually built (mismatches
-  in red), hole count, volume, reported against true mass, the **build123d script the agent wrote**, and
-  the agent's final working state.
+- Beside it: the **Current Design Understanding** of the part from the agent's final working state, pass/fail
+  for geometry and mass, each spec value next to what was actually built (mismatches in red), hole count,
+  volume, reported against true mass, the **build123d script the agent wrote**, and the agent's final
+  working state.
 
 Runs save what the dashboard needs: `runs/<run_id>/trace.jsonl` (one inspector record per step),
 `summary.json` (answer, per-part grades, specs) and every built part as an exact `.brep` and a `.step`
@@ -890,13 +900,16 @@ Before the demo: `python -m lha.bench.run --env design --sizes 1000,3000`, then 
    Play. Point at the three things changing together: an ECO arrives, one fact is overwritten in place
    (← UPDATED) and the old value goes to the archive, and the two bars (naive transcript against the
    agent's prompt) pull apart until the reduction passes 97%.
-2. **Nothing is lost (30 s).** Keep playing into the build phase. The agent recalls specs it evicted
+2. **Three views, one design (20 s).** Pause on any ECO. The *Current Design Understanding* card already
+   says what changed ("reduced the hole diameter from 5.3 mm to 3.2 mm"). It is regenerated from the
+   structured state, not remembered, and it names any values that are archived at that moment.
+3. **Nothing is lost (30 s).** Keep playing into the build phase. The agent recalls specs it evicted
    hundreds of steps earlier (← RECALLED, "Restored from archive").
-3. **It builds real parts (45 s).** The BUILD panel goes from 1,000 events to a ~1.3k-token state, to a
-   build123d script, to a `.step` file and the validator's ✓ geometry, ✓ mass. Click *Open the parts in 3D*
-   and rotate a part over its reference outline.
-4. **At scale (30 s).** *Benchmarks* tab at 3,000 messages: 161k tokens naive against 1.3k, 1.5% of the input tokens.
-5. **Days-long runs (15 s).** `lha.cli run … --run-id demo`, Ctrl-C, run it again with the same `--run-id`,
+4. **It builds real parts (40 s).** The BUILD panel goes from 1,000 events to a ~1.3k-token state, to a
+   build123d script, to a `.step` file and the validator's ✓ geometry, ✓ mass. Click *Open the parts in 3D*:
+   the part's description, its 3D shape over the reference, and the grade side by side.
+5. **At scale (20 s).** *Benchmarks* tab at 3,000 messages: 161k tokens naive against 1.3k, 1.5% of the input tokens.
+6. **Days-long runs (10 s).** `lha.cli run … --run-id demo`, Ctrl-C, run it again with the same `--run-id`,
    and the step counter continues where it stopped.
 
 For a live model, run `--live --sizes 200 --inspect` in one terminal (or follow it in the dashboard).
