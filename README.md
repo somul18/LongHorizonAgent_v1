@@ -52,18 +52,24 @@ Offline, where scripted policies read exactly the prompt a model would see, so t
 | benchmark | messages | stateful peak prompt | naive peak prompt | stateful input tokens vs naive |
 |---|---:|---:|---:|---:|
 | IncidentDesk | 3,000 | **831** | 169,525 | **1.0%** |
-| DesignDesk (CAD) | 3,000 | **1,230** | 161,217 | **1.5%** |
+| DesignDesk (CAD) | 3,000 | **1,277** | 161,302 | **1.5%** |
 
-Live, with Claude Sonnet 4.5 on AWS Bedrock (one run, DesignDesk, 50 messages, seed 0):
+Live, with Claude Sonnet 4.5 on AWS Bedrock (DesignDesk, 50 messages, seed 0, two runs):
 
-| agent | score | steps | peak prompt | total input tokens |
-|---|---:|---:|---:|---:|
-| **stateful** | **0.67** | 61 | 2,316 | 105,882 (44% of naive) |
-| naive | 0.33 | 55 | 9,442 | 241,537 |
+| run | agent | score | steps | peak prompt | total input tokens |
+|---|---|---:|---:|---:|---:|
+| 1 | **stateful** | **0.67** | 61 | 2,316 | 105,882 (44% of naive) |
+| 1 | naive | 0.33 | 55 | 9,442 | 241,537 |
+| 2 | stateful | 0.33 | 70 | 2,309 | 126,495 (53% of naive) |
+| 2 | naive | 0.33 | 55 | 9,087 | 240,828 |
 
-That live number is a single run at a short horizon, so read it as a first data point, not a
-measurement. At 50 messages the live budget held every fact, so this run did not exercise eviction
-and recall. Longer horizons (`--sizes 200,1000`) and more seeds are the next experiment. See
+Both agents kept every spec value correctly. They lost points in CAD: the volumes show Sonnet cut the
+holes only halfway through the plate (for example motor-mount at 56,871 mm³, where the correct part is
+56,742.6 mm³ and a part with half-depth holes is 56,871.3 mm³). The stateful agent also rebuilt parts
+it had already built. Both runs came before the fixes described under
+[What the live runs taught us](#designdesk-cad), so they show where things stood, not what LHA can do.
+At 50 messages the live budget also held every fact, so these runs didn't exercise eviction and recall.
+Longer horizons (`--sizes 200,1000`) and more seeds are the next experiment. See
 [Limitations](#limitations-and-roadmap).
 
 ---
@@ -286,14 +292,14 @@ Each part scores the average of the two checks, and the run scores the average o
 
 | messages | agent | score | steps | peak prompt tok | total input tok | cost vs naive |
 |---:|---|---:|---:|---:|---:|---:|
-| 50 | **stateful** | 1.00 | 57 | 1,229 | 61,665 | **61.8%** |
-| 50 | naive | 1.00 | 55 | 3,445 | 99,749 | 100% |
-| 200 | **stateful** | 1.00 | 207 | 1,230 | 244,726 | **20.8%** |
-| 200 | naive | 1.00 | 205 | 11,399 | 1,176,682 | 100% |
-| 1,000 | **stateful** | 1.00 | 1,009 | 1,230 | 1,222,965 | **4.5%** |
-| 1,000 | naive | 1.00 | 1,005 | 53,812 | 27,091,015 | 100% |
-| 3,000 | **stateful** | 1.00 | 3,010 | 1,230 | 3,664,826 | **1.5%** |
-| 3,000 | naive | 1.00 | 3,005 | 161,217 | 241,575,971 | 100% |
+| 50 | **stateful** | 1.00 | 58 | 1,289 | 65,203 | **63.0%** |
+| 50 | naive | 1.00 | 55 | 3,530 | 103,540 | 100% |
+| 200 | **stateful** | 1.00 | 207 | 1,294 | 247,162 | **20.8%** |
+| 200 | naive | 1.00 | 205 | 11,484 | 1,190,696 | 100% |
+| 1,000 | **stateful** | 1.00 | 1,012 | 1,273 | 1,229,559 | **4.5%** |
+| 1,000 | naive | 1.00 | 1,005 | 53,897 | 27,159,643 | 100% |
+| 3,000 | **stateful** | 1.00 | 3,012 | 1,277 | 3,669,466 | **1.5%** |
+| 3,000 | naive | 1.00 | 3,005 | 161,302 | 241,781,104 | 100% |
 
 The stateful agent takes a few extra steps at larger sizes: those are `recall` calls fetching evicted specs.
 
@@ -302,6 +308,12 @@ model keyed facts as `base-plate_width`, the tokenizer treated that as one word,
 and the agent then kept matching its own past queries until it ran out of steps. That led to the
 recall fixes described [above](#archive-and-recall), a key-naming hint in the goal text and a larger
 live budget. After those fixes the same setup scored 0.67 (stateful) against 0.33 (naive).
+
+The next runs scored 0.33 for both agents. Every spec value was right, but Sonnet's scripts cut the holes
+only halfway through. `cad_build` counted the cylindrical faces, which looked fine, so the model had no way
+to notice. It now also reports `z_through_holes`, and the task text asks the agent to check `bbox_mm` and
+`z_through_holes` against the spec, to fix and rebuild if they don't match, and to record
+`<part>.mass_g` once a part is right so it doesn't rebuild it. Both agents get the same instructions.
 
 ---
 
@@ -512,7 +524,7 @@ result = p.part
 
 | tool | args | returns |
 |---|---|---|
-| `cad_build` | `name`, `script`, optional `material` or `density` (g/cm³) | `built 'name': {"valid", "solids", "bbox_mm", "volume_mm3", "faces", "cyl_faces", "mass_g"}` |
+| `cad_build` | `name`, `script`, optional `material` or `density` (g/cm³) | `built 'name': {"valid", "solids", "bbox_mm", "volume_mm3", "faces", "cyl_faces", "z_through_holes", "mass_g"}` |
 | `cad_measure` | `name`, optional `material`/`density` | the same measurements |
 | `cad_list` | none | every built part with measurements |
 | `cad_export` | `name`, `format`: `step` or `stl` | path of the exported file |
@@ -551,7 +563,7 @@ lha/
     index.html      dashboard page (charts + three.js viewer)
 tinybird/           datasources (agent_steps, agent_archive) and endpoints
 results/            committed offline results; live_* and runs/ are git-ignored
-tests/              17 tests
+tests/              18 tests
 ```
 
 ---
@@ -576,13 +588,13 @@ Deploy Tinybird with the `tb` CLI (`tb deploy` from `tinybird/`), then set `TINY
 pytest -q
 ```
 
-The 17 tests cover:
+The 18 tests cover:
 
 - **Core:** overwrite and archive of stale facts, bad ops reported rather than raised, the notes ring
   buffer, compaction under budget with pins respected, JSON parsing from fenced or chatty replies,
   flat-vs-growing prompts on IncidentDesk, crash-and-resume from a checkpoint, and recall that matches
   keys however they're spelled while skipping its own echoes.
-- **CAD:** build, measure and export tools; geometry matching that ignores translation but catches a
+- **CAD:** build, measure and export tools; blind holes told apart from through-holes; geometry matching that ignores translation but catches a
   wrong hole size; DesignDesk end to end with eviction and recall; stale specs graded as wrong; the
   dashboard's data layer (runs, grades, meshes, path-traversal rejection).
 - **LLM clients:** the Messages API client sends no sampling parameters and returns only text blocks,
@@ -602,8 +614,6 @@ CAD tests are skipped automatically if build123d isn't installed.
 - **Token counts are estimates** (~4 characters per token) for budgets and offline runs. Live runs
   report Bedrock's real counts.
 - **Recall is lexical.** It works well for keys, ids and names, and less well for paraphrased questions.
-- **In a live run, the stateful agent sometimes rebuilds parts it already built.** It doesn't record what
-  it has finished. A goal hint or a `built` fact would fix this.
 - **DesignDesk parts are simple plates**, deliberately, so grading is exact. Richer parts (pockets,
   fillets, assemblies) are a natural extension.
 
@@ -620,7 +630,7 @@ CAD tests are skipped automatically if build123d isn't installed.
 
 1. **The problem (30 s).** `python -m lha.bench.run --env design`, then open `python -m lha.ui`. On
    *Prompt size per step* at 3,000 messages, the naive line climbs to 161k tokens while the stateful line
-   stays flat at about 1.2k: 1.5% of the cost.
+   stays flat at about 1.3k: 1.5% of the cost.
 2. **What the agent sees (45 s).** `python -m lha.cli state <run>`, or the dashboard's *final working
    state*. That is the whole memory: goal, current facts with sources, and breadcrumbs of what was archived.
 3. **Nothing is lost (30 s).** `python -m lha.cli recall <run> "motor-mount.width"` brings back an evicted
