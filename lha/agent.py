@@ -190,8 +190,10 @@ class StatefulAgent(_BaseAgent):
             "n_archived": len(self.archive.items), "evictions": len(evicted), "op_errors": len(op_errors),
         })
         if self.verbose:
+            result = s.observation.split("->\n", 1)[-1].splitlines()[0][:100] if s.observation else ""
+            flag = " PARSE ERROR" if self._feedback.startswith("Your last reply") else ""
             print(f"[{self.run_id} step {s.step}] tool={tool} prompt={usage.input_tokens}tok "
-                  f"facts={len(s.facts)} {'; '.join(evicted)}")
+                  f"facts={len(s.facts)}{flag} | {result} {'; '.join(evicted)}", flush=True)
 
     def _archive(self, kind: str, key: str, payload: dict) -> None:
         self.archive.put(self.state.step, kind, key, payload)
@@ -239,4 +241,4 @@ class NaiveAgent(_BaseAgent):
         self._emit({"step": self.stats.steps, "tool": tool, "prompt_tokens": usage.input_tokens,
                     "output_tokens": usage.output_tokens, "state_tokens": estimate_tokens(prompt)})
         if self.verbose:
-            print(f"[{self.run_id} step {self.stats.steps}] tool={tool} prompt={usage.input_tokens}tok")
+            print(f"[{self.run_id} step {self.stats.steps}] tool={tool} prompt={usage.input_tokens}tok", flush=True)

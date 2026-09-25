@@ -46,7 +46,7 @@ def run_one(kind: str, n: int, seed: int, budget: int, live: bool, out: Path, en
     shutil.rmtree(out / "runs" / run_id, ignore_errors=True)  # benchmarks start fresh (agents would resume)
     sinks = [JsonlSink(out / "steps.jsonl"), *sinks_from_env()]
     common = dict(llm=llm, tools=ToolBox(env.tools()), goal=env.goal(), run_dir=out / "runs",
-                  run_id=run_id, sinks=sinks, max_steps=n + 60)
+                  run_id=run_id, sinks=sinks, max_steps=n + 60, verbose=live)  # live runs are slow: show each step
     if kind == "stateful":
         agent = StatefulAgent(**common, compactor=Compactor(budget_tokens=budget,
                               summarizer=summarizer_from_env() if live else None))
