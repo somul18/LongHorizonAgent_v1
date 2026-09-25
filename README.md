@@ -1,8 +1,11 @@
 # LongHorizonAgent (LHA): state, not history
 
-**An agent architecture for runs that last thousands of steps, with a benchmark that checks the agent
-still gets the details right at the end, including building correct CAD parts from a spec that kept
-changing.**
+**An agent architecture for runs that last thousands of steps, and a CAD agent built on it.** The
+agent follows a mechanical design through thousands of engineering change orders, then writes
+**build123d** (OpenCascade) scripts that produce real 3D parts. Each part is graded geometrically
+against the true spec and can be inspected in a 3D dashboard.
+
+![A plate the agent designed, shown in the dashboard with its spec, grade and build123d script](docs/images/cad-part-pass.png)
 
 Most agents remember by appending: every tool result and every model reply goes back into the prompt.
 That works for 20 steps. At 2,000 steps it breaks in three ways:
@@ -27,6 +30,7 @@ grows linearly instead of quadratically.
 ## Contents
 
 - [Results at a glance](#results-at-a-glance)
+- [CAD modelling: what the agent builds](#cad-modelling-what-the-agent-builds)
 - [How it works](#how-it-works)
 - [The benchmarks](#the-benchmarks)
   - [IncidentDesk](#incidentdesk)
@@ -71,6 +75,83 @@ it had already built. Both runs came before the fixes described under
 At 50 messages the live budget also held every fact, so these runs didn't exercise eviction and recall.
 Longer horizons (`--sizes 200,1000`) and more seeds are the next experiment. See
 [Limitations](#limitations-and-roadmap).
+
+---
+
+## CAD modelling: what the agent builds
+
+The agent works on CAD **as code**. It never drives a GUI. It writes a short
+[build123d](https://github.com/gumyr/build123d) script, the `cad_build` tool runs the script in the
+OpenCascade geometry kernel (the same kernel FreeCAD uses), and the agent gets back measurements it can
+check. This runs headless, so it works in a container or CI, on any OS, with no CAD licence.
+
+```text
+ inbox message                working state                 agent's script                build123d / OpenCascade
+ ─────────────                ─────────────                 ──────────────                ───────────────────────
+ [ECO-7871] hinge-plate:  ─►  hinge-plate.thickness = 3 ─►  L, W, T, D = 80, 70, 3, 5.3 ─►  solid B-rep part
+ thickness changed to 3 mm    hinge-plate.width = 70         Box(L, W, T)                   │
+                              hinge-plate.material = steel   Hole(D/2) at 4 corners         ▼
+                              ... (recalled if evicted)      result = p.part             measurements back to the agent:
+                                                                                         valid, bbox_mm, volume_mm3,
+                                                                                         z_through_holes, mass_g
+                                                                                            │
+                                                                                            ▼
+                                                           grader: same shape as the reference part? mass within 1%?
+```
+
+**1. What a part is.** DesignDesk uses eight mounting plates (`base-plate`, `motor-mount`, `lid`, …).
+Each is a rectangular plate `length × width × thickness` with four corner through-holes 6 mm in from
+each edge, made of one of five materials. The shapes are deliberately simple, so a model can build
+them reliably and the grading is exact. The hard part is getting every number current after thousands
+of changes.
+
+**2. What the agent writes.** A real script from a run (`results/runs/<run>/cad/hinge-plate.py`):
+
+```python
+L, W, T, D, INSET = 80, 70, 3, 5.3, 6
+with BuildPart() as p:
+    Box(L, W, T)
+    with Locations(*[(x, y) for x in (-L/2 + INSET, L/2 - INSET) for y in (-W/2 + INSET, W/2 - INSET)]):
+        Hole(D / 2)
+result = p.part
+```
+
+**3. What the agent gets back.** One line of numbers, never the geometry itself, so the prompt stays small:
+
+```text
+built 'hinge-plate': {"valid": true, "solids": 1, "bbox_mm": [80.0, 70.0, 3.0], "volume_mm3": 16535.26,
+                      "faces": 10, "cyl_faces": 4, "z_through_holes": 4, "density_g_cm3": 7.85, "mass_g": 129.802}
+```
+
+The agent is told to compare `bbox_mm` and `z_through_holes` with the spec, fix the script and rebuild
+if they differ, and record `<part>.mass_g` once the part is right. If a script raises an error, the error
+comes back as the observation so the model can fix it.
+
+**4. How it is graded.** The grader builds the reference part from the true final spec and compares it
+with what the agent built. Bounding boxes must match to 0.01 mm, and the volume in one solid but not
+the other must be under 0.1% of the part after aligning centres. The reported mass must be within 1%.
+A stale thickness, a wrong hole size, a hole in the wrong place or a hole that stops halfway all fail.
+
+**5. How to see it.** `python -m lha.ui` shows every part in 3D over its reference. A wrong part turns
+see-through and the reference outline turns red. Here the part was built 8 mm thick instead of 6 mm (a
+hand-made example; see [the dashboard](#the-dashboard)):
+
+![A wrong part: see-through, with the red reference outline showing it is 2 mm too thick](docs/images/cad-part-fail.png)
+
+**6. Where the files go.** For each run, `results/runs/<run_id>/cad/` holds each part's script (`.py`)
+and exact shape (`.brep`). `cad_export` writes STEP (for FreeCAD, Fusion 360, SolidWorks, Onshape) or STL
+(for slicers and 3D printing).
+
+**7. Using it outside the benchmark.** The CAD tools are ordinary tools, so any LHA agent can use them.
+With `--cad`, your own goal gets them:
+
+```bash
+python -m lha.cli run "Design a 60x40 mm Raspberry Pi camera mount plate, 3 mm PLA, M2.5 holes on a 21x12.5 mm pattern, export STEP" --run-id cam1 --cad
+ls runs/cam1/cad/        # the script, the .brep and the exported .step
+```
+
+Full tool reference: [CAD tools reference](#cad-tools-reference). Benchmark details:
+[DesignDesk](#designdesk-cad).
 
 ---
 
@@ -318,6 +399,8 @@ to notice. It now also reports `z_through_holes`, and the task text asks the age
 ---
 
 ## The dashboard
+
+![Benchmarks tab: at 3,000 messages the naive prompt climbs to 161k tokens while the stateful prompt stays at 1.3k](docs/images/dashboard-benchmarks.png)
 
 ```bash
 python -m lha.ui                         # opens http://127.0.0.1:8765 and reads ./results
