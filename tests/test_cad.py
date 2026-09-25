@@ -88,6 +88,7 @@ def test_ui_serves_runs_grades_and_meshes(tmp_path):
 
 def test_memory_inspector_trace_and_views(tmp_path):
     import json
+    import re
 
     from lha.bench.run import run_one
     from lha.inspect import Inspector
@@ -107,6 +108,8 @@ def test_memory_inspector_trace_and_views(tmp_path):
     ins = Inspector(run_dir.name, 120, summary)
     frames = [ins.feed(r) for r in recs]
     assert "← UPDATED" in "".join(frames) and "Evicted to archive" in "".join(frames)
+    assert "└─ ARCHIVE" in "".join(frames)  # an overwrite forks: new value active, old value archived
+    assert re.search(r"Recall operations\s+[1-9]", frames[-1]) and frames[0].startswith("DESIGNDESK")
     assert "Geometry validator" in frames[-1] and "score 1.00" in frames[-1]
 
     t = UI(tmp_path).trace(run_dir.name, after=len(recs) - 5)

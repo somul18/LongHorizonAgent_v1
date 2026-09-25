@@ -92,14 +92,15 @@ Longer horizons (`--sizes 200,1000`) and more seeds are the next experiment. See
 ## Watch it work: the Memory State Inspector
 
 **History grows. State doesn't have to.** The inspector makes that visible while the agent runs. For
-every step it shows the incoming event, the working state the model actually sees, the state operation
-the event caused (what was overwritten, and what was superseded, evicted or recalled), and how big the
-prompt is against the transcript a naive agent would be carrying by then.
+every step it shows the incoming event, the working state the model actually sees, the state mutation
+the event caused (an overwrite forks into the ACTIVE value and the superseded value sent to the ARCHIVE;
+evictions and recalls are shown too), and long-horizon memory counters: events processed, active prompt
+against the naive context it replaces, context reduction, archived facts and recall operations.
 
 A real frame, from step 822 of a 1,000-message DesignDesk run:
 
 ```text
-LONG HORIZON AGENT — STEP 822            INBOX 821 / 1,000   scripted-stateful
+DESIGNDESK — STEP 822 · MESSAGE 821 / 1,000                  scripted-stateful
 
 INCOMING EVENT
 ──────────────────────────────────────────────────────────────────────────────
@@ -119,26 +120,25 @@ CURRENT PLAN
 OPEN QUESTIONS
   None
 
-STATE OPERATION
+STATE MUTATION
 ──────────────────────────────────────────────────────────────────────────────
-set_fact("sensor-bracket.hole_diameter", "3.2")
-Superseded:  sensor-bracket.hole_diameter = 5.3 mm → archive
+set_fact  sensor-bracket.hole_diameter
+          5.3 mm → 3.2 mm
+          ├─ ACTIVE   3.2 mm
+          └─ ARCHIVE  5.3 mm  (superseded)
 Action:  next_message()
 
-MEMORY
+LONG-HORIZON MEMORY
 ──────────────────────────────────────────────────────────────────────────────
-Events processed                               822
-Active context                        1,225 tokens
-Archived items                               1,080
-Naive equivalent (est.)              53,074 tokens
-Context reduction                            97.7%
+Events processed                                 822
+Active state (prompt)                   1,225 tokens
+Naive context (est.)                 53,074 tokens ↑
+Context reduction                              97.7%
+Archived facts                                   258
+Recall operations                                  0
 
 Naive   ████████████████████████████████████████████████████████████ 53.1K
 LHA     █ 1.2K
-
-prompt size over the run, same scale:
-Naive   ▁▁▁▁▂▂▂▂▂▂▂▂▂▃▃▃▃▃▃▃▃▄▄▄▄▄▄▄▄▄▅▅▅▅▅▅▅▅▅▆▆▆▆▆▆▆▆▆▇▇▇▇▇▇▇▇████
-LHA     ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
 ```
 
 When the inbox runs out and the build requests arrive, a **BUILD** panel shows the path from thousands of
@@ -157,7 +157,9 @@ The same view is the first tab of the dashboard (`python -m lha.ui`), with play/
 step slider, a chart of prompt size at every step, and a button to open the built parts in 3D. It follows
 live runs as they write their trace.
 
-![Memory inspector tab: the working state, the state operation, memory against the naive transcript, and the build pipeline ending in the validator](docs/images/memory-inspector.png)
+![Memory inspector tab at step 822: an ECO overwrites a fact, the old value forks to the archive, and the naive context keeps growing](docs/images/memory-inspector-mutation.png)
+
+![Memory inspector tab: the working state, the state mutation, memory against the naive transcript, and the build pipeline ending in the validator](docs/images/memory-inspector.png)
 
 Every stateful run writes `runs/<run_id>/trace.jsonl` with one record per step, and both views read that
 file. "Naive equivalent" is an estimate: the same goal plus every earlier reply and tool result
@@ -504,9 +506,10 @@ A local web page (stdlib HTTP server, bound to localhost, no extra installs). It
 - Pick any traced run: offline, live, or still running (marked LIVE, and it follows the run as it goes).
 - Play/pause, a speed selector and a step slider move through the run one step at a time.
 - Each step shows the incoming event, the working state (facts for the part in focus marked ← UPDATED or
-  ← RECALLED, the plan, open questions), the state operation (what was superseded, evicted or restored),
-  and the memory panel: events, active context, archive size, naive estimate, context reduction, the two
-  bars, and a chart of prompt size at every step so far.
+  ← RECALLED, the plan, open questions), the state mutation (an overwrite drawn as its ACTIVE and ARCHIVE
+  halves; evictions and restores listed), and long-horizon memory: events, active prompt, naive context
+  (with ↑ while it grows), context reduction, archived facts, recall operations, the two bars, and a chart
+  of prompt size at every step so far.
 - In the build phase: the pipeline from historical events to working state, build123d, `.step` file and
   validator, with the agent's own checks per part and the final verdict, plus a button to open the parts in 3D.
 - See [Watch it work](#watch-it-work-the-memory-state-inspector) for the terminal version and what each part means.

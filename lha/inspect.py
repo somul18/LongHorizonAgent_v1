@@ -81,6 +81,10 @@ class Inspector:
         self.inbox = (0, total_messages)
         self.history: list[tuple[int, int, int]] = []  # (step, prompt, naive) for the bar history
         self.builds: dict[str, dict] = {}  # part -> the agent's own check of its latest build
+        self.archived_facts = 0  # facts moved to the archive so far: superseded, evicted or dropped
+        self.recalls = 0         # recall operations so far
+        self.bench = ("DESIGNDESK" if "design_" in run_id else
+                      "INCIDENTDESK" if re.match(r"(live_)?(stateful|naive)-n\d+", run_id) else "LONG HORIZON AGENT")
 
     def feed(self, rec: dict) -> str:
         frame = self.render(rec)
@@ -99,6 +103,8 @@ class Inspector:
         if built := re.search(r"built '([\w-]+)': (\{.*\})", event):
             self.builds[built[1]] = json.loads(built[2])
         self.history.append((rec["step"], rec["prompt_tokens"], rec["naive_tokens"]))
+        self.archived_facts += sum(1 for kind, *_ in rec["archived"] if kind.endswith("_fact"))
+        self.recalls += rec["tool"] == "recall"
 
         out = [self._header(rec), "", self._event(event, rec), "", self._state(rec, changed), "",
                self._operation(rec), "", self._memory(rec)]
@@ -108,9 +114,9 @@ class Inspector:
 
     def _header(self, rec: dict) -> str:
         read, total = self.inbox
-        inbox = f"INBOX {read:,} / {total:,}" if total else ""
-        left = bold(f"LONG HORIZON AGENT — STEP {rec['step']:,}")
-        right = dim(f"{inbox}   {rec.get('model', '')}")
+        msg = f" · MESSAGE {read:,} / {total:,}" if total else ""
+        left = bold(f"{self.bench} — STEP {rec['step']:,}{msg}")
+        right = dim(rec.get("model", ""))
         return left + " " * max(1, W - _vis(left) - _vis(right)) + right
 
     def _event(self, event: str, rec: dict) -> str:
@@ -162,11 +168,20 @@ class Inspector:
         return "\n".join(lines)
 
     def _operation(self, rec: dict) -> str:
-        lines = [rule("STATE OPERATION")]
+        lines = [rule("STATE MUTATION")]
         ops = rec["ops"] or []
+        old_of = {k: old for k, old, _ in rec["changes"]}
+        forks = 0
         for op in ops[:6]:
             kind = op.get("op", "?")
-            if kind == "set_fact":
+            key = op.get("key")
+            if kind == "set_fact" and old_of.get(key) is not None and forks < 2:
+                # an overwrite: the new value stays active, the old one goes to the archive
+                forks += 1
+                old, new = _with_unit(key, old_of[key]), _with_unit(key, op.get("value"))
+                lines += [f"{bold('set_fact')}  {key}", f"          {old} → {bold(new)}",
+                          f"          ├─ {blue('ACTIVE ')}  {new}", f"          └─ {orange('ARCHIVE')}  {old}  " + dim("(superseded)")]
+            elif kind == "set_fact":
                 pin = ", pin=True" if op.get("pin") else ""
                 lines.append(f'set_fact("{op.get("key")}", {json.dumps(op.get("value"))}{pin})')
             elif kind == "update_task":
@@ -181,7 +196,7 @@ class Inspector:
             lines.append(dim("none"))
         sup = [(k, v) for kind, k, v in rec["archived"] if kind == "superseded_fact"]
         evi = [k for kind, k, _ in rec["archived"] if kind in ("evicted_fact", "dropped_fact")]
-        if sup:
+        if len(sup) > forks:
             lines.append("Superseded:  " + ", ".join(f"{k} = {_with_unit(k, v)} → archive" for k, v in sup)[:W - 13])
         if evi:
             lines.append(orange("Evicted to archive (over budget):  ") + ", ".join(evi)[:W - 35])
@@ -198,10 +213,12 @@ class Inspector:
     def _memory(self, rec: dict) -> str:
         naive, active = rec["naive_tokens"], rec["prompt_tokens"]
         red_pct = 100 * (1 - active / naive) if naive else 0
-        rows = [("Events processed", f"{rec['step']:,}"), ("Active context", f"{active:,} tokens"),
-                ("Archived items", f"{rec['archive_size']:,}"), ("Naive equivalent (est.)", f"{naive:,} tokens"),
-                ("Context reduction", f"{red_pct:.1f}%")]
-        lines = [rule("MEMORY")] + [f"{k:<30}{v:>20}" for k, v in rows]
+        growing = len(self.history) > 1 and naive > self.history[-2][2]
+        rows = [("Events processed", f"{rec['step']:,}"), ("Active state (prompt)", f"{active:,} tokens"),
+                ("Naive context (est.)", f"{naive:,} tokens" + (" ↑" if growing else "  ")),
+                ("Context reduction", f"{red_pct:.1f}%"), ("Archived facts", f"{self.archived_facts:,}"),
+                ("Recall operations", f"{self.recalls:,}")]
+        lines = [rule("LONG-HORIZON MEMORY")] + [f"{k:<30}{v:>22}" for k, v in rows]
         top = max(naive, active, 1)
         bw = W - 18
 
