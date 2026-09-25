@@ -96,3 +96,15 @@ def test_load_dotenv_skips_blanks_and_keeps_shell_values(tmp_path, monkeypatch):
     import os
     assert (os.environ["LHA_T_A"], os.environ["LHA_T_B"], os.environ["LHA_T_SHELL"]) == ("x", "y", "shell")
     assert "LHA_T_EMPTY" not in os.environ
+
+
+def test_load_dotenv_falls_back_to_repo_root(tmp_path, monkeypatch):
+    from lha import config
+
+    (tmp_path / ".env").write_text("LHA_T_ROOT=from-repo\n")
+    monkeypatch.setattr(config, "REPO_ROOT", tmp_path)
+    monkeypatch.chdir(tmp_path / "..")  # run from a folder with no .env
+    monkeypatch.delenv("LHA_T_ROOT", raising=False)
+    config.load_dotenv()
+    import os
+    assert os.environ["LHA_T_ROOT"] == "from-repo"

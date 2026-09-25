@@ -458,15 +458,20 @@ if you need both.
 
 ## Configuration and environment variables
 
-Copy the template, fill it in, and load it into each new terminal:
+Copy the template and fill it in:
 
 ```bash
 cp .env.example .env
 $EDITOR .env
-set -a; source .env; set +a
 ```
 
-`.env` is git-ignored. Environment variables are per terminal, so a new terminal needs `source .env` again.
+That's all. `lha.cli`, `lha.bench.run` and `lha.ui` load `.env` automatically at startup: first
+`./.env` in the folder you run from, then the `.env` at the repository root. So a new terminal needs no
+`export` or `source`. Variables already set in your terminal take priority over the file, and empty values
+in it are ignored. `.env` is git-ignored.
+
+To use the same settings in other tools (the AWS CLI, your own scripts), load it into the terminal yourself:
+`set -a; source .env; set +a`.
 
 | variable | required for | meaning |
 |---|---|---|
@@ -499,7 +504,7 @@ prints `export` lines for the best model that worked.
 
 | error | meaning | fix |
 |---|---|---|
-| `NoCredentialsError: Unable to locate credentials` | this terminal has no AWS keys | `source .env`, `aws configure`, or export the keys again |
+| `NoCredentialsError: Unable to locate credentials` | no AWS keys found | put them in `.env` (loaded automatically) or run `aws configure` |
 | `UnrecognizedClientException: security token … invalid` / `ExpiredToken` | keys wrong or expired | get fresh keys (temporary keys expire) |
 | `Model use case details have not been submitted` | the account never filled Anthropic's one-time form | AWS console → Bedrock → Model catalog → any Anthropic model → **Submit use case details**; wait a few minutes |
 | `This Model is marked by provider as Legacy …` | the model is retired for accounts that haven't used it recently | pick a newer model from `lha.cli models` |
@@ -646,7 +651,7 @@ lha/
     index.html      dashboard page (charts + three.js viewer)
 tinybird/           datasources (agent_steps, agent_archive) and endpoints
 results/            committed offline results; live_* and runs/ are git-ignored
-tests/              18 tests
+tests/              20 tests
 ```
 
 ---
@@ -671,12 +676,13 @@ Deploy Tinybird with the `tb` CLI (`tb deploy` from `tinybird/`), then set `TINY
 pytest -q
 ```
 
-The 18 tests cover:
+The 20 tests cover:
 
 - **Core:** overwrite and archive of stale facts, bad ops reported rather than raised, the notes ring
   buffer, compaction under budget with pins respected, JSON parsing from fenced or chatty replies,
   flat-vs-growing prompts on IncidentDesk, crash-and-resume from a checkpoint, and recall that matches
-  keys however they're spelled while skipping its own echoes.
+  keys however they're spelled while skipping its own echoes, and `.env` loading (blank values
+  skipped, terminal values win, repository-root fallback).
 - **CAD:** build, measure and export tools; blind holes told apart from through-holes; geometry matching that ignores translation but catches a
   wrong hole size; DesignDesk end to end with eviction and recall; stale specs graded as wrong; the
   dashboard's data layer (runs, grades, meshes, path-traversal rejection).

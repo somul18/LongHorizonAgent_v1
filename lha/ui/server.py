@@ -184,6 +184,9 @@ def make_handler(ui: UI):
 
 
 def main(argv=None) -> None:
+    from ..config import load_dotenv
+
+    load_dotenv()
     ap = argparse.ArgumentParser(prog="python -m lha.ui")
     ap.add_argument("--results", default="results")
     ap.add_argument("--port", type=int, default=8765)
