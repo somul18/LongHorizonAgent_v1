@@ -150,10 +150,11 @@ class UI:
         if not _NAME.match(part):
             raise ValueError("bad part name")
         if kind == "ref":
-            spec = self._summary(d).get("spec", {}).get(part)
+            summary = self._summary(d)
+            spec = summary.get("spec", {}).get(part)
             if not spec:
                 raise FileNotFoundError(f"no reference spec for {part!r} in this run")
-            return _ref_mesh(json.dumps(spec, sort_keys=True))
+            return _ref_mesh(json.dumps(spec, sort_keys=True), summary.get("family", {}).get(part, "plate"))
         brep = d / "cad" / f"{part}.brep"
         if not brep.exists():
             raise FileNotFoundError(f"{part!r} has no saved shape (runs from before the UI existed only kept scripts)")
@@ -217,11 +218,14 @@ def _brep_mesh(path: str, _mtime: float) -> dict:
 
 
 @lru_cache(maxsize=128)
-def _ref_mesh(spec_json: str) -> dict:
+def _ref_mesh(spec_json: str, family: str = "plate") -> dict:
     from ..bench.design_desk import plate_script
     from ..cad import CadWorkspace
+    from ..families import FAMILIES
 
     s = json.loads(spec_json)
+    if family != "plate":
+        return _to_mesh(FAMILIES[family].reference(s))
     script = plate_script(*(float(s[a]) for a in ("length", "width", "thickness", "hole_diameter")))
     return _to_mesh(CadWorkspace().build("ref", script))
 

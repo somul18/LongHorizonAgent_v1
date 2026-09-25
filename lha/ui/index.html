@@ -561,14 +561,21 @@ function renderSide(side, part, g, spec, info, answer, understanding) {
     side.append(el("div", { class: "section-title", text: "Spec vs built" }));
     const dl = el("dl", { class: "kv" });
     const bb = m?.bbox_mm || [];
-    const rows = [["length", spec?.length, bb[0]], ["width", spec?.width, bb[1]], ["thickness", spec?.thickness, bb[2]]];
-    for (const [k, want, got] of rows) {
-      const bad = want != null && got != null && Math.abs(+want - got) > 0.01;
-      dl.append(el("dt", { text: k }), el("dd", { class: bad ? "bad" : "", text: `${want ?? "–"} mm${got != null ? `  → built ${got}` : ""}` }));
+    const plate = !spec || spec.length != null;  // bottles, crosses and stars from the design-intent flow list their own attributes
+    if (plate) {
+      const rows = [["length", spec?.length, bb[0]], ["width", spec?.width, bb[1]], ["thickness", spec?.thickness, bb[2]]];
+      for (const [k, want, got] of rows) {
+        const bad = want != null && got != null && Math.abs(+want - got) > 0.01;
+        dl.append(el("dt", { text: k }), el("dd", { class: bad ? "bad" : "", text: `${want ?? "–"} mm${got != null ? `  → built ${got}` : ""}` }));
+      }
+      if (spec) dl.append(el("dt", { text: "hole Ø" }), el("dd", { text: `${spec.hole_diameter} mm` }), el("dt", { text: "material" }), el("dd", { text: spec.material }));
+    } else {
+      for (const [k, v] of Object.entries(spec)) dl.append(el("dt", { text: k.replace(/_/g, " ") }), el("dd", { text: withUnit(k, v) }));
+      if (bb.length) dl.append(el("dt", { text: "built bbox" }), el("dd", { text: `${bb.join(" × ")} mm` }));
     }
-    if (spec) dl.append(el("dt", { text: "hole Ø" }), el("dd", { text: `${spec.hole_diameter} mm` }), el("dt", { text: "material" }), el("dd", { text: spec.material }));
     const thru = m?.z_through_holes ?? m?.cyl_faces;
-    if (m) dl.append(el("dt", { text: "through-holes" }), el("dd", { class: thru === 4 ? "" : "bad", text: `${thru} of 4${m.cyl_faces !== thru ? ` (${m.cyl_faces} cylindrical faces)` : ""}` }),
+    if (m && plate) dl.append(el("dt", { text: "through-holes" }), el("dd", { class: thru === 4 ? "" : "bad", text: `${thru} of 4${m.cyl_faces !== thru ? ` (${m.cyl_faces} cylindrical faces)` : ""}` }));
+    if (m) dl.append(
       el("dt", { text: "volume" }), el("dd", { text: `${fmt(m.volume_mm3)} mm³` }), el("dt", { text: "valid solid" }), el("dd", {}, status(m.valid, "yes", "no")));
     const a = answer && Object.values(answer).find(x => x && x.part === part);
     if (g) dl.append(el("dt", { text: "mass" }), el("dd", { class: g.mass ? "" : "bad", text: `${a?.mass_g ?? "–"} g reported · ${g.ref_mass_g} g true` }));
@@ -660,7 +667,10 @@ class Viewer {
     const box = new THREE.Box3().setFromObject(this.group); if (box.isEmpty()) return;
     const size = box.getSize(new THREE.Vector3()).length();
     this.camera.up.set(0, 0, 1);
-    this.camera.position.set(size * 0.7, -size * 1.0, size * 0.8);
+    // back off far enough that the bounding sphere fits the narrower field of view (tall bottles, wide plates)
+    const half = THREE.MathUtils.degToRad(this.camera.fov / 2), hHalf = Math.atan(Math.tan(half) * this.camera.aspect);
+    const d = (size / 2) / Math.sin(Math.min(half, hHalf)) * 1.35;
+    this.camera.position.copy(new THREE.Vector3(0.7, -1.0, 0.8).normalize().multiplyScalar(d));
     this.camera.near = size / 100; this.camera.far = size * 20; this.camera.updateProjectionMatrix();
     this.controls.target.set(0, 0, 0); this.controls.update();
   }
@@ -671,7 +681,8 @@ class Viewer {
 // Replays runs/<run>/trace.jsonl (written by the stateful agent every step), or follows it live.
 const I = { run: null, recs: [], views: [], idx: 0, playing: false, timer: null, poll: null, total: null, summary: null, done: false };
 const appendAll = (node, ...kids) => node.append(...kids.filter(k => k != null && k !== false));
-const UNIT = { length: "mm", width: "mm", thickness: "mm", hole_diameter: "mm", mass_g: "g" };
+const UNIT = { length: "mm", width: "mm", thickness: "mm", hole_diameter: "mm", mass_g: "g", height: "mm", diameter: "mm", wall: "mm",
+  neck_diameter: "mm", neck_height: "mm", bar_width: "mm", crossbar_from_top: "mm", size: "mm", line_width: "mm" };
 const withUnit = (k, v) => { const u = UNIT[k.split(".").pop()]; const s = typeof v === "string" ? v : JSON.stringify(v); return u ? `${s} ${u}` : s; };
 
 async function loadInspectorRuns() {
@@ -926,6 +937,10 @@ const EXAMPLES = [
   ["Complete spec", "Create a motor mounting plate 100 mm long, 80 mm wide and 4 mm thick from 6061 aluminum. Add four 5.3 mm through-holes, one near each corner, with the hole centers 6 mm from the adjacent edges."],
   ["Missing thickness", "Make me an 80 × 60 mm steel sensor mounting plate with four M4 mounting holes."],
   ["Rail clamp", "Create a 95 × 45 × 6 mm rail clamp from ABS with four 4.3 mm mounting holes."],
+  ["Water bottle", "Create a water bottle 250 mm tall with a 70 mm body diameter, a 28 mm neck that is 20 mm tall, and 2 mm walls, from PET."],
+  ["Cross", "Create a brass cross pendant 60 mm tall and 40 mm wide, with 8 mm wide bars, 3 mm thick, the crossbar centred 20 mm from the top."],
+  ["Star of David", "Create a Star of David 50 mm across from sterling silver, 2 mm thick, drawn as an outline with 3 mm wide lines."],
+  ["Star, style missing", "Make a Star of David 40 mm across and 3 mm thick in gold."],
 ];
 const D = { view: null, viewer: null, viewerEl: null, meshStep: null, err: "" };
 const ATTR_ORDER = ["length", "width", "thickness", "hole_diameter", "material"];
@@ -960,15 +975,17 @@ async function renderIntent() {
   const spec = Object.fromEntries(v.facts.filter(f => f.key.startsWith(v.part + ".")).map(f => [f.attr, f.value]));
   const nChanges = v.evolution.length - 1;
   const head = el("div", { class: "insp-head" }, el("h2", { text: `DesignDesk: ${v.part.replace(/-/g, " ")} · ${nChanges ? nChanges + " change" + (nChanges > 1 ? "s" : "") + " since intent" : "initial design"}` }),
-    el("span", { class: "meta", text: `interpreter: ${v.interpretation.interpreter}` }),
+    el("span", { class: "meta", text: `${v.family_label || "plate"} · interpreter: ${v.interpretation.interpreter}` }),
     el("button", { class: "btn", style: "margin-left:auto", onclick: () => { D.view = null; renderIntent(); }, text: "New design" }));
 
   // 1. original design intent + interpretation
   const interp = el("table", { class: "interp" });
-  for (const a of ATTR_ORDER) {
+  const attrs = v.attrs || ATTR_ORDER.map(a => ({ attr: a, label: a.replace("_", " ") }));
+  for (const { attr: a, label } of attrs) {
     const val = v.interpretation.facts[a];
+    if (val == null && !(v.interpretation.unknown || []).includes(a)) continue;  // not needed (a solid star has no line width)
     interp.append(el("tr", {}, el("td", { class: val != null ? "ok" : "unk", text: val != null ? "✓" : "?" }),
-      el("td", { class: "mono", text: a.replace("_", " ") }), el("td", { class: "v mono", text: val != null ? withUnit(a, val) : "not specified" }),
+      el("td", { class: "mono", text: label }), el("td", { class: "v mono", text: val != null ? withUnit(a, val) : "not specified" }),
       el("td", {}, val != null ? provTag("design_intent") : el("span", { class: "prov", text: "UNKNOWN: not guessed" }))));
   }
   const intentCard = el("div", { class: "card" }, el("h3", {}, "Original design intent", el("span", { text: "kept as written; never edited" })),
@@ -982,7 +999,7 @@ async function renderIntent() {
   if (v.build) {
     if (!D.viewerEl) { D.viewerEl = el("div", { class: "dview" }); D.viewer = new Viewer(D.viewerEl); }
     cad.append(D.viewerEl);
-  } else cad.append(el("div", { class: "empty", text: canBuild ? "Not built yet." : `Can't build yet: ${v.missing.map(a => a.replace("_", " ")).join(", ")} not specified.` }));
+  } else cad.append(el("div", { class: "empty", text: canBuild ? "Not built yet." : `Can't build yet: ${v.missing.map(a => a.replace(/_/g, " ")).join(", ")} not specified.` }));
   const buildBtn = el("button", { class: "btn primary", onclick: () => act(() => post("/api/design/build", { id: v.id })),
     text: v.build ? (v.build.stale ? "Rebuild CAD" : "Rebuild") : "Build CAD" });
   buildBtn.disabled = !canBuild;
@@ -999,8 +1016,10 @@ async function renderIntent() {
   if (v.build) {
     const c = v.build.checks, m = v.build.measure;
     const rows = [["Geometry", c.geometry, "matches an independently constructed reference"],
-      ["Dimensions", c.dimensions, `${m.bbox_mm.join(" × ")} mm`], ["Through-holes", c.through_holes, `${m.z_through_holes} of 4`],
-      ["Valid solid", c.valid_solid, `${m.solids} solid`], ["Mass", c.mass, `${m.mass_g} g (${spec.material})`]];
+      ["Dimensions", c.dimensions, `${m.bbox_mm.join(" × ")} mm` + (m.expected_bbox_mm && !c.dimensions ? ` (expected ${m.expected_bbox_mm.join(" × ")})` : "")],
+      c.through_holes !== undefined ? ["Through-holes", c.through_holes, `${m.z_through_holes} of 4`] : null,
+      ["Valid solid", c.valid_solid, `${m.solids} solid`], ["Mass", c.mass, `${m.mass_g} g (${spec.material})`],
+      m.capacity_ml != null ? ["Capacity", true, `${m.capacity_ml} ml (inside volume)`] : null].filter(Boolean);
     val.append(el("dl", { class: "kv" }, ...rows.flatMap(([k, ok, detail]) => [el("dt", { text: k }), el("dd", {}, status(ok, detail, detail))])));
     if (v.build.stale) val.append(el("div", { class: "stale", style: "margin-top:10px", text: "Validated against an earlier state." }));
   } else val.append(el("div", { class: "muted", text: "Build the part to validate it." }));
@@ -1011,7 +1030,9 @@ async function renderIntent() {
   for (const f of v.facts) ft.append(el("tr", {}, el("td", { class: "mono", text: f.key }), el("td", { class: "v mono", text: withUnit(f.key, f.value) }), el("td", {}, provTag(f.source))));
   st.append(ft);
   if (v.questions.length) st.append(el("div", { class: "sub2", text: "Open questions" }), ...v.questions.map(q => el("div", { text: "? " + q })));
-  const input = el("input", { placeholder: v.missing.length ? `Answer, e.g. "${v.missing[0].replace("_", " ")} 5 mm"` : 'Engineering change, e.g. "ECO-1847: thickness 4 mm → 3 mm"', "aria-label": "Change" });
+  const answerEg = a => a === "material" ? "material steel" : a === "style" ? "outline" : `${a.replace(/_/g, " ")} 5 mm`;
+  const changeEg = { bottle: "ECO-1847: wall 2 mm → 1.5 mm", cross: "ECO-1847: crossbar to 18 mm from the top", star: "ECO-1847: make it solid" }[v.family] || "ECO-1847: thickness 4 mm → 3 mm";
+  const input = el("input", { placeholder: v.missing.length ? `Answer, e.g. "${answerEg(v.missing[0])}"` : `Engineering change, e.g. "${changeEg}"`, "aria-label": "Change" });
   const send = () => input.value.trim() && act(() => post("/api/design/change", { id: v.id, text: input.value }));
   input.onkeydown = e => { if (e.key === "Enter") send(); };
   st.append(el("div", { class: "sub2", text: "Apply an engineering change or answer a question" }), el("div", { class: "change-in" }, input, el("button", { class: "btn", onclick: send, text: "Apply" })));
@@ -1023,7 +1044,7 @@ async function renderIntent() {
   v.evolution.forEach((e, i) => {
     if (i) chain.append(el("div", { class: "arrow", text: "↓ " + e.changes.map(([k, o, n]) => `${k.split(".")[1].replace("_", " ")} ${o ?? "?"} → ${n}`).join(", ") }));
     const [t, c] = provLabel(i === 0 ? "design_intent" : e.label === "User" ? "user" : e.label);
-    chain.append(el("div", { class: "node" }, el("span", { class: "lbl prov " + c, text: t }), el("div", { class: "mono", text: specLine(e.spec) })));
+    chain.append(el("div", { class: "node" }, el("span", { class: "lbl prov " + c, text: t }), el("div", { class: "mono", text: e.line ?? specLine(e.spec) })));
   });
   chain.append(el("div", { class: "arrow", text: "↓" }), el("div", { class: "node" }, el("span", { class: "lbl", text: "CURRENT DESIGN UNDERSTANDING → CAD" }),
     el("div", { text: v.build && !v.build.stale ? `built and ${v.build.ok ? "validated ✓" : "failing checks ✗"}` : "not built for this state yet" })));

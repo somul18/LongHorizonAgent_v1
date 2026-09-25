@@ -25,7 +25,8 @@ from typing import Any
 from .tools import Tool
 
 # g/cm^3. The agent passes a density (or one of these names) to get a mass.
-DENSITIES = {"al6061": 2.70, "steel": 7.85, "ss304": 8.00, "ti6al4v": 4.43, "abs": 1.04, "pla": 1.24, "pa12": 1.01}
+DENSITIES = {"al6061": 2.70, "steel": 7.85, "ss304": 8.00, "ti6al4v": 4.43, "abs": 1.04, "pla": 1.24, "pa12": 1.01,
+             "pet": 1.38, "hdpe": 0.95, "pp": 0.905, "brass": 8.50, "silver": 10.36, "gold": 19.3}
 
 SCRIPT_HELP = ("build123d script; `from build123d import *` is pre-imported; assign the solid to `result`. "
                "Units are mm. Example: result = Box(80, 40, 5) - Pos(30, 10, 0) * Cylinder(2.15, 5)")

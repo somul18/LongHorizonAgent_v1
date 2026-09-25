@@ -194,7 +194,7 @@ else, and the existing pipeline takes over from there:
 - Every requirement it leaves open becomes an open question (`add_question`) and stays **unknown**. It is
   never guessed, and the part can't be built until it is answered.
 - Conventions the interpreter does apply are shown as notes (for example, an M4 hole read as a 4.3 mm
-  clearance hole), as are requests this part family can't honour (six holes, another hole inset).
+  clearance hole), as are requests a part family can't honour (six holes, another hole inset).
 - Two interpreters share one output schema. A deterministic rule-based one works offline. A model-based
   one runs when a Bedrock (or OpenAI-compatible) model is configured, and its output is validated against
   the same schema, falling back to the rules if the call fails.
@@ -204,6 +204,42 @@ else, and the existing pipeline takes over from there:
 | "Create a motor mounting plate 100 mm long, 80 mm wide and 4 mm thick from 6061 aluminum. Add four 5.3 mm through-holes, one near each corner, with the hole centers 6 mm from the adjacent edges." | length 100, width 80, thickness 4, hole Ø 5.3, al6061, all ← DESIGN INTENT |
 | "Make me an 80 × 60 mm steel sensor mounting plate with four M4 mounting holes." | length 80, width 60, hole Ø 4.3 (note: M4 clearance), steel; **thickness UNKNOWN** |
 | "Create a 95 × 45 × 6 mm rail clamp from ABS with four 4.3 mm mounting holes." | length 95, width 45, thickness 6, hole Ø 4.3, abs |
+
+### Part families: plates, water bottles, crosses, Stars of David
+
+The request picks the part family (`lha/families.py`). Every family follows the same rules: stated values
+become facts, unstated ones stay unknown, and the part is only built once nothing is missing. Each family
+has a parametric build123d template (the kind of script the agent writes) **and an independently
+constructed reference** built a different way, so "geometry matches" means something.
+
+| family | attributes | built as | validated against |
+|---|---|---|---|
+| **plate** (the DesignDesk part) | length, width, thickness, hole Ø, material | box with 4 corner holes | box minus 4 cylinders; 4 through-holes counted |
+| **water bottle** | height, body Ø, wall, neck Ø, neck height, material | wall cross-section revolved about Z (body, 45° shoulder, open neck) | outer solid of revolution minus the inner cavity; capacity reported in ml |
+| **cross** (Latin or Greek) | height, width, bar width, thickness, crossbar position from the top, material | upright box + crossbar box | the 12-sided outline, extruded |
+| **Star of David** | size (point to point), thickness, style (solid / outline), line width (outline only), material | two triangles (or two triangular rings) extruded and unioned | `RegularPolygon` triangles |
+
+The dashboard has a chip for each one. Click **Water bottle**, **Cross** or **Star of David**, then
+*Create Design* and *Build CAD*:
+
+| chip | request | interpretation |
+|---|---|---|
+| Water bottle | "Create a water bottle 250 mm tall with a 70 mm body diameter, a 28 mm neck that is 20 mm tall, and 2 mm walls, from PET." | height 250, body Ø 70, wall 2, neck Ø 28, neck height 20, PET → ≈ 753 ml |
+| Cross | "Create a brass cross pendant 60 mm tall and 40 mm wide, with 8 mm wide bars, 3 mm thick, the crossbar centred 20 mm from the top." | Latin cross 60 × 40 × 3 mm, 8 mm bars, crossbar 20 mm from the top, brass |
+| Star of David | "Create a Star of David 50 mm across from sterling silver, 2 mm thick, drawn as an outline with 3 mm wide lines." | 50 mm point to point, 2 mm thick, outline with 3 mm lines, sterling silver |
+| Star, style missing | "Make a Star of David 40 mm across and 3 mm thick in gold." | **style UNKNOWN** (solid or outline is asked, not assumed). Answering "outline" then opens a new question: the line width |
+
+Changes work the same way as for plates, for example `ECO-12: wall 2 mm -> 1.5 mm`,
+`ECO-3: crossbar to 18 mm from the top`, `ECO-9: switch from sterling silver to gold`, or `make it solid`.
+A request for a Greek cross (or "plus sign") centres the crossbar and says so in a note. A bottle capacity
+in ml is noted but not used to size the bottle, since that would mean guessing its proportions.
+
+Materials: 6061 aluminum, steel, 304 stainless, Ti-6Al-4V, ABS, PLA, PA12, PET, HDPE, polypropylene,
+brass, sterling silver and gold. Each has a density, so every part gets a mass.
+
+![A Star of David from intent: an outline in sterling silver, then ECO-9 switches it to gold; validated against an independent reference](docs/images/design-intent-star.png)
+
+![A water bottle from intent: revolved in PET, ECO-12 thins the wall to 1.5 mm, capacity 779 ml](docs/images/design-intent-bottle.png)
 
 **Provenance stays visible.** Every fact shows where its current value came from: ← DESIGN INTENT,
 ← ECO-1847, ← USER (an answer), or ← ECO-7576 · recalled after a trip through the archive. The request is
@@ -215,7 +251,7 @@ In the dashboard's **Design intent** view (the first thing the Memory inspector 
 | | |
 |---|---|
 | **Original design intent**: the request as written, and the agent's interpretation (✓ per stated value, ? per unknown) | **Current CAD**: the part in 3D over an independently built reference, with `.step` export |
-| **Current design understanding**: regenerated from the state after every change | **Validation**: geometry, dimensions, through-holes, valid solid, mass |
+| **Current design understanding**: regenerated from the state after every change | **Validation**: geometry, dimensions, valid solid, mass, plus through-holes (plates) or capacity (bottles) |
 | **Current structured state**: facts with provenance, open questions, and a box to apply a change or answer a question | **Design evolution**: intent → each change → current, with the CAD marked stale until rebuilt |
 
 ![A design from intent: the request and its interpretation, the validated CAD, the current understanding, and the evolution through a user answer and ECO-1847](docs/images/design-intent.png)
@@ -677,7 +713,7 @@ if you need both.
 git switch main
 git pull
 pip install -e ".[dev,aws,cad]"     # only needed when dependencies change; harmless otherwise
-pytest -q                           # expect: 37 passed
+pytest -q                           # expect: 53 passed
 ```
 
 If `git pull` or `git switch` stops because of local changes, a benchmark run probably rewrote a tracked
@@ -879,6 +915,7 @@ lha/
   cli.py            lha run | state | recall | models
   inspect.py        Memory State Inspector (python -m lha.inspect)
   intent.py         Natural-Language Design Intent: request -> set_fact operations (rules or model)
+  families.py       part families: plate, water bottle, cross, Star of David (parse, build, reference, describe)
   design_session.py a design from intent: state, archive, changes, build + validation
   describe.py       Current Design Understanding: plain-English view derived from the state
   bench/
@@ -890,7 +927,7 @@ lha/
     index.html      dashboard page (charts + three.js viewer)
 tinybird/           datasources (agent_steps, agent_archive) and endpoints
 results/            committed offline results; live_* and runs/ are git-ignored
-tests/              37 tests
+tests/              53 tests
 ```
 
 ---
@@ -915,7 +952,7 @@ Deploy Tinybird with the `tb` CLI (`tb deploy` from `tinybird/`), then set `TINY
 pytest -q
 ```
 
-The 37 tests cover:
+The 53 tests cover:
 
 - **Core:** overwrite and archive of stale facts, bad ops reported rather than raised, the notes ring
   buffer, compaction under budget with pins respected, JSON parsing from fenced or chatty replies,
@@ -932,6 +969,10 @@ The 37 tests cover:
   requests the part family can't honour, changes that take the new value ("6 mm to 4 mm", "ABS → Al6061"),
   a session from intent to validated CAD with provenance and archive, an `--intent` benchmark run keeping
   provenance through 150 messages, and the dashboard accepting design writes only as same-origin JSON.
+- **Part families:** the water bottle, cross and Star of David requests read exactly; an unstated star
+  style asked rather than assumed, and a change that opens a new requirement (outline → line width);
+  family changes ("neck height" is not the neck Ø, "crossbar" is not the bar width); each family built,
+  changed by an ECO, rebuilt and validated against its independent reference; bottle capacity.
 - **LLM clients:** the Messages API client sends no sampling parameters and returns only text blocks,
   and model IDs route to the right client.
 
