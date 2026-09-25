@@ -6,7 +6,7 @@ requires-python = ">=3.10"
 dependencies = []
 
 [project.optional-dependencies]
-aws = ["boto3>=1.34"]
+aws = ["boto3>=1.34", "anthropic[bedrock]>=1.0"]
 cad = ["build123d>=0.9"]
 dev = ["pytest>=8"]
 

@@ -124,7 +124,7 @@ python -m lha.bench.run --env design --live --sizes 50,200 --skip-naive-above 20
 
 | Sponsor | Role in LHA | Where |
 |---|---|---|
-| **AWS** | Main reasoning model through Bedrock's Converse API (`LHA_BEDROCK_MODEL_ID`). Checkpoints and archives are plain files, ready to move to S3 or DynamoDB. | `lha/llm.py::BedrockLLM` |
+| **AWS** | Main reasoning model on Bedrock (`LHA_BEDROCK_MODEL_ID`): current Claude models such as `anthropic.claude-sonnet-5` through the Messages API (bedrock-mantle), versioned `...-v1:0` IDs through Converse. Checkpoints and archives are plain files, ready to move to S3 or DynamoDB. | `lha/llm.py::BedrockMantleLLM`, `BedrockLLM` |
 | **Liquid AI** | A small, efficient LFM model as the **memory model**: it writes the digests of evicted and completed work, so compaction doesn't burn frontier-model tokens. It can also run the whole agent through any OpenAI-compatible endpoint. | `OpenAICompatLLM`, `summarizer_from_env` |
 | **Nimble** | `web_search` / `web_fetch` tools that bring in fresh web data. Pages land in `observation` for one step only, and the agent copies what matters into facts with a `source`. | `lha/tools.py::nimble_tools` |
 | **Tinybird** | Every step and every archive item streams to the Events API. Endpoints show `context_growth` (is the prompt flat?), `run_costs`, and `fact_history` (an audit trail of every value a key ever had). | `lha/sinks.py`, `tinybird/` |

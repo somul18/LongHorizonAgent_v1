@@ -1,6 +1,9 @@
 """Model adapters. All return (text, usage) and share one tiny interface.
 
-- BedrockLLM:  AWS Bedrock Converse API (the main reasoning model)
+- BedrockMantleLLM: Claude on Amazon Bedrock through the Messages API endpoint
+  (bedrock-mantle), for current models with IDs like "anthropic.claude-sonnet-5"
+- BedrockLLM:  AWS Bedrock Converse API, for versioned IDs such as
+  "us.anthropic.claude-sonnet-4-5-20250929-v1:0" and non-Anthropic models
 - OpenAICompatLLM: any OpenAI-compatible endpoint. Used for Liquid AI LFM
   models (served via Liquid's API, vLLM, llama.cpp or Ollama) as the cheap
   model that does compaction / summarization.
@@ -11,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import urllib.request
 from dataclasses import dataclass, field
 from typing import Callable, Protocol
@@ -57,6 +61,40 @@ class BedrockLLM:
         text = "".join(c.get("text", "") for c in resp["output"]["message"]["content"])
         u = resp.get("usage", {})
         return text, Usage(u.get("inputTokens", 0), u.get("outputTokens", 0))
+
+
+class BedrockMantleLLM:
+    """Current Claude models on Bedrock (Messages API shape, `anthropic.`-prefixed IDs).
+
+    No `temperature`: current models reject sampling parameters. Thinking runs
+    adaptively by default and its tokens count against max_tokens, hence the
+    larger default. LHA_EFFORT (low|medium|high|xhigh|max) trades depth for
+    cost and latency per step; unset uses the API default."""
+
+    def __init__(self, model_id: str | None = None, region: str | None = None, effort: str | None = None,
+                 client=None):
+        self.model_id = model_id or os.environ["LHA_BEDROCK_MODEL_ID"]
+        self.name = f"bedrock-mantle:{self.model_id}"
+        self.effort = effort or os.environ.get("LHA_EFFORT") or None
+        if client is None:
+            from anthropic import AnthropicBedrockMantle  # optional dependency: pip install "anthropic[bedrock]"
+
+            client = AnthropicBedrockMantle(aws_region=region or os.environ.get("AWS_REGION", "us-east-1"))
+        self.client = client
+
+    def complete(self, system: str, prompt: str, max_tokens: int = 16000) -> tuple[str, Usage]:
+        extra = {"output_config": {"effort": self.effort}} if self.effort else {}
+        resp = self.client.messages.create(
+            model=self.model_id,
+            max_tokens=max_tokens,
+            system=system,
+            messages=[{"role": "user", "content": prompt}],
+            **extra,
+        )
+        if resp.stop_reason == "refusal":
+            return "", Usage(resp.usage.input_tokens, resp.usage.output_tokens)  # fed back as a parse error
+        text = "".join(b.text for b in resp.content if b.type == "text")
+        return text, Usage(resp.usage.input_tokens, resp.usage.output_tokens)
 
 
 class OpenAICompatLLM:
@@ -110,9 +148,10 @@ def make_summarizer(llm: LLM) -> Callable[[str], str]:
 
 
 def from_env() -> LLM:
-    """Pick the main model from the environment: Bedrock if configured, else Liquid."""
-    if os.environ.get("LHA_BEDROCK_MODEL_ID"):
-        return BedrockLLM()
+    """Pick the main model from the environment: Bedrock if configured, else Liquid.
+    Versioned Bedrock IDs ("...-v1:0") go through Converse; current ones through Mantle."""
+    if model_id := os.environ.get("LHA_BEDROCK_MODEL_ID"):
+        return BedrockLLM() if re.search(r"-v\d+:\d+$", model_id) else BedrockMantleLLM()
     if os.environ.get("LHA_LIQUID_BASE_URL"):
         return OpenAICompatLLM()
     raise RuntimeError("Set LHA_BEDROCK_MODEL_ID (AWS) or LHA_LIQUID_BASE_URL (Liquid / OpenAI-compatible).")
