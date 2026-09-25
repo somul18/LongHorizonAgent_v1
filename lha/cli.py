@@ -5,6 +5,7 @@
     python -m lha.cli run "Design a 2U rack blanking panel" --run-id cad1 --cad   # + build123d CAD tools
     python -m lha.cli state research1                 # print the working state
     python -m lha.cli recall research1 "mistral"      # search cold storage
+    python -m lha.cli models                          # which Bedrock Claude models this account can call
 """
 
 from __future__ import annotations
@@ -54,6 +55,46 @@ def cmd_recall(a) -> None:
         print(f"[step {h.step}] {h.kind} {h.key}: {json.dumps(h.payload, default=str)[:300]}")
 
 
+# Newest first. Short IDs go through Bedrock's Messages API, versioned ones through Converse.
+BEDROCK_CANDIDATES = [
+    "anthropic.claude-opus-5-5", "anthropic.claude-opus-5", "anthropic.claude-sonnet-5",
+    "anthropic.claude-opus-4-8", "anthropic.claude-opus-4-7", "anthropic.claude-haiku-4-5",
+    "{geo}.anthropic.claude-opus-4-1-20250805-v1:0", "{geo}.anthropic.claude-sonnet-4-5-20250929-v1:0",
+    "{geo}.anthropic.claude-haiku-4-5-20251001-v1:0",
+]
+
+
+def _reason(e: Exception) -> str:
+    body = getattr(e, "body", None)  # anthropic SDK errors
+    if isinstance(body, dict) and isinstance(body.get("error"), dict):
+        return str(body["error"].get("message", e))
+    resp = getattr(e, "response", None)  # botocore ClientError
+    if isinstance(resp, dict) and "Error" in resp:
+        return str(resp["Error"].get("Message", e))
+    return str(e).splitlines()[0]
+
+
+def cmd_models(a) -> None:
+    """Send a tiny request to each candidate and report which ones this account can use (costs < $0.01)."""
+    from .llm import BedrockLLM, BedrockMantleLLM
+
+    geo = {"eu": "eu", "ap": "apac"}.get(a.region[:2], "us")
+    ok = []
+    for mid in (c.format(geo=geo) for c in BEDROCK_CANDIDATES):
+        try:
+            llm = BedrockLLM(mid, a.region) if mid.endswith(":0") else BedrockMantleLLM(mid, a.region)
+            llm.complete("Reply with one word.", "hi", max_tokens=64)
+            ok.append(mid)
+            print(f"OK   {mid}")
+        except Exception as e:  # noqa: BLE001 - any failure means "not usable here"
+            print(f"no   {mid}  ({type(e).__name__}: {_reason(e)[:110]})")
+    if ok:
+        print(f"\nexport AWS_REGION={a.region}\nexport LHA_BEDROCK_MODEL_ID={ok[0]}")
+    else:
+        print(f"\nNo Claude model is usable in {a.region}. Request access in the Bedrock console "
+              "(Model access / Model catalog) or try --region us-west-2.")
+
+
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser(prog="lha")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -72,6 +113,9 @@ def main(argv=None) -> None:
     q.add_argument("query")
     q.add_argument("-k", type=int, default=5)
     q.set_defaults(fn=cmd_recall)
+    m = sub.add_parser("models", help="probe which Bedrock Claude models this account can call")
+    m.add_argument("--region", default=os.environ.get("AWS_REGION", "us-east-1"))
+    m.set_defaults(fn=cmd_models)
     a = ap.parse_args(argv)
     a.fn(a)
 
