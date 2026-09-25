@@ -14,6 +14,7 @@ from pathlib import Path
 
 from ..agent import NaiveAgent, StatefulAgent
 from ..compactor import Compactor
+from ..config import load_dotenv
 from ..llm import ScriptedLLM, from_env, summarizer_from_env
 from ..sinks import JsonlSink, sinks_from_env
 from ..tools import ToolBox
@@ -74,6 +75,7 @@ def run_one(kind: str, n: int, seed: int, budget: int, live: bool, out: Path, en
 
 
 def main(argv=None) -> None:
+    load_dotenv()
     ap = argparse.ArgumentParser()
     ap.add_argument("--sizes", default="50,200,1000,3000")
     ap.add_argument("--seeds", default="0")

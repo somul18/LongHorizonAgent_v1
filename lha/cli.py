@@ -18,6 +18,7 @@ from pathlib import Path
 from .agent import StatefulAgent
 from .archive import Archive
 from .compactor import Compactor
+from .config import load_dotenv
 from .llm import from_env, summarizer_from_env
 from .sinks import JsonlSink, sinks_from_env
 from .state import WorkingState
@@ -97,6 +98,7 @@ def cmd_models(a) -> None:
 
 
 def main(argv=None) -> None:
+    load_dotenv()
     ap = argparse.ArgumentParser(prog="lha")
     sub = ap.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("run")
