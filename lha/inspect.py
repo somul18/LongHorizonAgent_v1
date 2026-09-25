@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import textwrap
 import os
 import re
 import shutil
@@ -83,6 +84,9 @@ class Inspector:
         self.builds: dict[str, dict] = {}  # part -> the agent's own check of its latest build
         self.archived_facts = 0  # facts moved to the archive so far: superseded, evicted or dropped
         self.recalls = 0         # recall operations so far
+        from .describe import tracker_for
+
+        self.design = tracker_for(run_id)  # "Current Design Understanding", derived from the state
         self.bench = ("DESIGNDESK" if "design_" in run_id else
                       "INCIDENTDESK" if re.match(r"(live_)?(stateful|naive)-n\d+", run_id) else "LONG HORIZON AGENT")
 
@@ -106,8 +110,11 @@ class Inspector:
         self.archived_facts += sum(1 for kind, *_ in rec["archived"] if kind.endswith("_fact"))
         self.recalls += rec["tool"] == "recall"
 
-        out = [self._header(rec), "", self._event(event, rec), "", self._state(rec, changed), "",
-               self._operation(rec), "", self._memory(rec)]
+        design = self.design.feed(rec)
+        out = [self._header(rec), "", self._event(event, rec), "", self._state(rec, changed), ""]
+        if design:
+            out += [self._understanding(design), ""]
+        out += [self._operation(rec), "", self._memory(rec)]
         if self._building(rec, event):
             out += ["", self._build(rec)]
         return "\n".join(out)
@@ -165,6 +172,15 @@ class Inspector:
             lines += [f"  {icon.get(st, '○')} {title}" for _, title, st in rec["tasks"]]
         lines.append(dim("OPEN QUESTIONS"))
         lines += [f"  ? {q}" for q in rec["questions"]] or ["  None"]
+        return "\n".join(lines)
+
+    @staticmethod
+    def _understanding(design: dict) -> str:
+        head = bold("CURRENT DESIGN UNDERSTANDING")
+        tag = design["part"]
+        lines = [head + " " * max(1, W - _vis(head) - len(tag)) + tag, dim("─" * W)]
+        lines += textwrap.wrap(design["text"], W)
+        lines.append(dim("derived from the working state above; regenerated every step, never stored"))
         return "\n".join(lines)
 
     def _operation(self, rec: dict) -> str:

@@ -68,7 +68,21 @@ class UI:
             st = json.loads((d / "state.json").read_text())
             facts = {k: {"value": f.get("value"), "pinned": f.get("pinned"), "source": f.get("source")}
                      for k, f in st.get("facts", {}).items()}
-        return {"run_id": run_id, "summary": s, "parts": parts, "facts": facts}
+        # Current Design Understanding of each part, from the agent's final working state (+ the trace,
+        # for the latest engineering change). Derived here on request; never stored.
+        from ..describe import tracker_for
+
+        design = tracker_for(run_id)
+        if (d / "trace.jsonl").exists():
+            for line in (d / "trace.jsonl").read_text().splitlines():
+                try:
+                    design.feed(json.loads(line))
+                except json.JSONDecodeError:
+                    break
+        flat = {k: f["value"] for k, f in facts.items()}
+        names = set(parts) | {g.get("part") for g in (s.get("grade") or {}).values()}
+        descriptions = {p: design.describe(flat, p) for p in sorted(n for n in names if n)}
+        return {"run_id": run_id, "summary": s, "parts": parts, "facts": facts, "descriptions": descriptions}
 
     def trace(self, run_id: str, after: int = 0) -> dict:
         """Memory-inspector records with step > after (the page polls this while a run is live)."""
@@ -76,14 +90,18 @@ class UI:
         p = d / "trace.jsonl"
         if not p.exists():
             raise FileNotFoundError("this run has no trace (it predates the inspector, or is a naive run)")
+        from ..describe import tracker_for
+
+        design = tracker_for(run_id)  # regenerated from the state on every request, never stored
         recs = []
         for line in p.read_text().splitlines():
             try:
                 r = json.loads(line)
             except json.JSONDecodeError:  # a line still being written
                 break
+            view = design.feed(r)
             if r["step"] > after:
-                recs.append(r)
+                recs.append({**r, "design": view})
         m = re.search(r"-n(\d+)-", run_id)
         summary = self._summary(d)
         return {"records": recs, "total_messages": int(m[1]) if m else None,

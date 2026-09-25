@@ -41,6 +41,7 @@ grows linearly instead of quadratically.
 
 - [Results at a glance](#results-at-a-glance)
 - [Watch it work: the Memory State Inspector](#watch-it-work-the-memory-state-inspector)
+- [Current Design Understanding: three views of one design](#current-design-understanding-three-views-of-one-design)
 - [CAD modelling: what the agent builds](#cad-modelling-what-the-agent-builds)
 - [How it works](#how-it-works)
 - [The benchmarks](#the-benchmarks)
@@ -166,6 +167,44 @@ file. "Naive equivalent" is an estimate: the same goal plus every earlier reply 
 replayed as a transcript, measured with the same ~4 characters per token as everything else. The real
 naive agent, run separately, lands in the same range: 53.9k tokens at 1,000 messages against the
 estimate's 53k near the end of the inbox.
+
+---
+
+## Current Design Understanding: three views of one design
+
+Every part exists in three synchronized forms, and all three show the current design after any number of
+engineering changes:
+
+| view | what it is | role |
+|---|---|---|
+| **Structured state** | the facts in the working state, e.g. `motor-mount.thickness = 4` | source of truth |
+| **Current Design Understanding** | a plain-English paragraph generated from those facts | human-readable view |
+| **CAD geometry** | the build123d part, `.brep` and `.step` | physical realization |
+
+The description is a pure function of the working state (`lha/describe.py`). It is regenerated whenever
+the state changes, is never stored, and is never shown to the agent, so it can't become a second, drifting
+copy of the facts. No model call is involved. It covers the part's shape and dimensions, material, hole
+features, its built mass once there is one, and the latest approved engineering change to it. If a value
+isn't in the working state at that moment, for example because it was evicted, it says so rather than
+guessing:
+
+> The sensor bracket is an 80 × ? × ? mm rectangular mounting plate, with four 3.2 mm through-holes, one
+> near each corner, 6 mm in from each edge. The latest approved engineering change (ECO-1049) reduced the
+> hole diameter from 5.3 mm to 3.2 mm. Not in the working state right now: width, thickness, material
+> (archived; the agent has to recall them before building).
+
+After the build, the same generator describes the finished part:
+
+> The rail clamp is a 95 × 45 × 8 mm rectangular mounting plate made from 6061 aluminum, with four 3.2 mm
+> through-holes, one near each corner, 6 mm in from each edge. As built, it weighs 91.645 g. The latest
+> approved engineering change (ECO-6713) increased the length from 80 mm to 95 mm.
+
+It appears as a **CURRENT DESIGN UNDERSTANDING** panel in the terminal inspector, as a card next to the
+working state in the dashboard's Memory inspector tab (following the part the agent is working on, step by
+step), and above each part in the CAD parts tab. In the CAD parts tab it is built from the agent's final
+working state, so reading it next to the grade shows whether the agent's understanding matched the true spec.
+
+![Current Design Understanding next to the working state and the state mutation at step 822](docs/images/design-understanding.png)
 
 ---
 
@@ -762,6 +801,7 @@ lha/
   tokens.py         ~4 chars/token estimate used for budgets and offline cost
   cli.py            lha run | state | recall | models
   inspect.py        Memory State Inspector (python -m lha.inspect)
+  describe.py       Current Design Understanding: plain-English view derived from the state
   bench/
     incident_desk.py  IncidentDesk env + scripted policies
     design_desk.py    DesignDesk env, grading + scripted policies
@@ -771,7 +811,7 @@ lha/
     index.html      dashboard page (charts + three.js viewer)
 tinybird/           datasources (agent_steps, agent_archive) and endpoints
 results/            committed offline results; live_* and runs/ are git-ignored
-tests/              21 tests
+tests/              26 tests
 ```
 
 ---
@@ -796,7 +836,7 @@ Deploy Tinybird with the `tb` CLI (`tb deploy` from `tinybird/`), then set `TINY
 pytest -q
 ```
 
-The 21 tests cover:
+The 26 tests cover:
 
 - **Core:** overwrite and archive of stale facts, bad ops reported rather than raised, the notes ring
   buffer, compaction under budget with pins respected, JSON parsing from fenced or chatty replies,
@@ -807,6 +847,8 @@ The 21 tests cover:
   wrong hole size; DesignDesk end to end with eviction and recall; stale specs graded as wrong; the
   dashboard's data layer (runs, grades, meshes, path-traversal rejection); the inspector trace (overwrites with old
   values, evictions, naive estimate, STEP export) and its rendering.
+- **Design descriptions:** the three example descriptions, the latest-change sentence with its ECO, and
+  reporting values that aren't in the working state instead of guessing them.
 - **LLM clients:** the Messages API client sends no sampling parameters and returns only text blocks,
   and model IDs route to the right client.
 
