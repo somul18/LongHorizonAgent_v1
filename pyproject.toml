@@ -1,7 +1,7 @@
 [project]
 name = "lha"
 version = "0.1.0"
-description = "Long-horizon agents with explicit mutable state instead of ever-growing history"
+description = "An AI agent that turns plain-English design requests into validated 3D CAD parts, staying accurate through thousands of engineering changes by keeping a small working state instead of a growing transcript."
 requires-python = ">=3.10"
 dependencies = []
 
