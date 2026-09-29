@@ -1,5 +1,7 @@
 # LongHorizonAgent (LHA): state, not history
 
+> An AI agent that turns plain-English design requests into validated 3D CAD parts, staying accurate through thousands of engineering changes by keeping a small working state instead of a growing transcript.
+
 **History grows. State doesn't have to.**
 
 LHA is an agent architecture for runs that last thousands of steps, plus a **CAD agent** built on it.
